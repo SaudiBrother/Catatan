@@ -207,7 +207,8 @@ export async function renderBrowse(container, params, ctx) {
     </div>
     </main>`;
 
-  $('#btnBrowseBack', container)?.onclick = () => ctx.back();
+  const btnBrowseBack = $('#btnBrowseBack', container);
+  if (btnBrowseBack) btnBrowseBack.onclick = () => ctx.back();
   $('#btnNewFolder', container).onclick = () => openNewFolderSheet(folderId, ctx);
   $('#btnSortMenu', container).onclick = () => {}; // future: sort options sheet
 
@@ -799,7 +800,8 @@ export async function renderReader(container, params, ctx) {
     </main>`;
 
   $('#btnReaderBack', container).onclick = () => ctx.back();
-  $('#btnReaderTOC', container)?.onclick = () => {
+  const btnReaderTOC = $('#btnReaderTOC', container);
+  if (btnReaderTOC) btnReaderTOC.onclick = () => {
     const html = `<ol style="line-height:2.2">${notes.map((n, i) => `<li><a href="#reader-note-${n.id}" style="color:var(--accent)">${escapeHtml(n.title || 'Bab ' + (i+1))}</a></li>`).join('')}</ol>`;
     openSheet(html, { title: 'Daftar Isi' });
   };

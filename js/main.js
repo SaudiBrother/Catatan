@@ -294,4 +294,17 @@ async function boot() {
   });
 }
 
-boot().catch(console.error);
+boot().catch((err) => {
+  console.error('[Catat] Boot failed:', err);
+  // Never leave the splash frozen with no feedback — show a visible,
+  // dismissable error instead of hanging forever with nothing clickable.
+  const splash = document.getElementById('splash');
+  if (splash) {
+    splash.insertAdjacentHTML('beforeend', `
+      <div style="margin-top:22px;padding:0 32px;text-align:center">
+        <p style="color:#ff6b6b;font-size:13px;font-weight:600;margin-bottom:10px">Gagal memuat aplikasi</p>
+        <p style="color:rgba(255,255,255,.6);font-size:12px;line-height:1.5;margin-bottom:16px">${escapeHtml(err?.message || String(err))}</p>
+        <button onclick="location.reload()" style="background:#5E5CE6;color:#fff;border:none;border-radius:10px;padding:10px 20px;font-size:14px;font-weight:700">Coba Lagi</button>
+      </div>`);
+  }
+});
