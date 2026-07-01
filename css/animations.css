@@ -1,0 +1,67 @@
+/* ==========================================================================
+   CATAT — Animations
+   ========================================================================== */
+
+@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes pulse-dot { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .4; transform: scale(.7); } }
+@keyframes shake {
+  10%, 90% { transform: translateX(-2px); }
+  20%, 80% { transform: translateX(4px); }
+  30%, 50%, 70% { transform: translateX(-8px); }
+  40%, 60% { transform: translateX(8px); }
+}
+@keyframes float-in {
+  from { opacity: 0; transform: translateY(14px) scale(.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes pop-in {
+  0% { opacity: 0; transform: scale(.85); }
+  60% { opacity: 1; transform: scale(1.04); }
+  100% { transform: scale(1); }
+}
+@keyframes splash-out {
+  to { opacity: 0; transform: scale(1.08); }
+}
+@keyframes badge-unlock {
+  0% { transform: scale(.4) rotate(-8deg); opacity: 0; }
+  55% { transform: scale(1.15) rotate(4deg); opacity: 1; }
+  100% { transform: scale(1) rotate(0); }
+}
+@keyframes ripple {
+  to { transform: scale(2.6); opacity: 0; }
+}
+
+.view-enter { animation: float-in var(--dur-base) var(--ease-out-ios) both; }
+.stagger > * { animation: float-in var(--dur-base) var(--ease-out-ios) both; }
+.stagger > *:nth-child(1) { animation-delay: 0ms; }
+.stagger > *:nth-child(2) { animation-delay: 35ms; }
+.stagger > *:nth-child(3) { animation-delay: 70ms; }
+.stagger > *:nth-child(4) { animation-delay: 105ms; }
+.stagger > *:nth-child(5) { animation-delay: 140ms; }
+.stagger > *:nth-child(6) { animation-delay: 175ms; }
+.stagger > *:nth-child(n+7) { animation-delay: 200ms; }
+
+.badge.unlocked.just-unlocked { animation: badge-unlock .6s var(--ease-spring) both; }
+
+/* Splash screen */
+#splash {
+  position: fixed; inset: 0; z-index: var(--z-splash); background: var(--bg);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-4);
+}
+#splash .sp-icon { width: 84px; height: 84px; border-radius: 26px; background: var(--accent-grad); display: grid; place-items: center; box-shadow: 0 16px 40px -10px color-mix(in srgb, var(--accent) 60%, transparent); animation: pop-in .6s var(--ease-spring) both; }
+#splash .sp-icon svg { width: 40px; height: 40px; color: #fff; }
+#splash .sp-name { font-size: var(--fs-title1); font-weight: 800; letter-spacing: -0.4px; animation: float-in .5s var(--ease-out-ios) .15s both; }
+#splash .sp-tag { color: var(--text-secondary); font-size: var(--fs-footnote); animation: float-in .5s var(--ease-out-ios) .25s both; }
+#splash.splash-out { animation: splash-out .45s var(--ease-out-ios) both; pointer-events: none; }
+
+/* View transitions API (progressive enhancement) */
+@media (prefers-reduced-motion: no-preference) {
+  ::view-transition-old(root) { animation: 180ms var(--ease-out-ios) both fade-out; }
+  ::view-transition-new(root) { animation: 220ms var(--ease-out-ios) both fade-in; }
+}
+@keyframes fade-out { to { opacity: 0; } }
+@keyframes fade-in { from { opacity: 0; } }
+
+.press-scale { transition: transform var(--dur-fast) var(--ease-spring); }
+.press-scale:active { transform: scale(0.95); }

@@ -1,0 +1,224 @@
+/* ==========================================================================
+   CATAT — Themes. Each theme defines a full token set on [data-theme="x"].
+   ========================================================================== */
+
+/* ---------------- LIGHT (default) ---------------- */
+[data-theme="light"] {
+  --bg: #F2F2F7;
+  --bg-blur: rgba(242,242,247,.78);
+  --bg-elevated: #FFFFFF;
+  --bg-soft: rgba(120,120,128,.10);
+  --bg-soft-strong: rgba(120,120,128,.16);
+  --text: #1C1C1E;
+  --text-secondary: #6E6E73;
+  --text-tertiary: #AEAEB2;
+  --on-accent: #FFFFFF;
+  --accent: #5E5CE6;
+  --accent-rgb: 94,92,230;
+  --accent-2: #FF7AB8;
+  --accent-grad: linear-gradient(135deg, #5E5CE6, #7A5CF0 55%, #FF7AB8);
+  --accent-soft: rgba(94,92,230,.12);
+  --border: rgba(60,60,67,.13);
+  --divider: rgba(60,60,67,.10);
+  --success: #34C759;
+  --warning: #FF9F0A;
+  --danger: #FF3B30;
+  --scroll-thumb: rgba(120,120,128,.3);
+  --shadow-card: 0 1px 2px rgba(0,0,0,.04), 0 8px 24px -8px rgba(0,0,0,.10);
+  --skeleton: linear-gradient(100deg, rgba(120,120,128,.08) 30%, rgba(120,120,128,.16) 50%, rgba(120,120,128,.08) 70%);
+}
+
+/* ---------------- DARK ---------------- */
+[data-theme="dark"] {
+  --bg: #131316;
+  --bg-blur: rgba(19,19,22,.76);
+  --bg-elevated: #1F1F23;
+  --bg-soft: rgba(118,118,128,.18);
+  --bg-soft-strong: rgba(118,118,128,.26);
+  --text: #F2F2F4;
+  --text-secondary: #A6A6AD;
+  --text-tertiary: #6E6E76;
+  --on-accent: #FFFFFF;
+  --accent: #7D7AFF;
+  --accent-rgb: 125,122,255;
+  --accent-2: #FF8AC2;
+  --accent-grad: linear-gradient(135deg, #7D7AFF, #9A7AF0 55%, #FF8AC2);
+  --accent-soft: rgba(125,122,255,.18);
+  --border: rgba(255,255,255,.09);
+  --divider: rgba(255,255,255,.07);
+  --success: #30D158;
+  --warning: #FFB23F;
+  --danger: #FF453A;
+  --scroll-thumb: rgba(255,255,255,.18);
+  --shadow-card: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px -10px rgba(0,0,0,.55);
+  --skeleton: linear-gradient(100deg, rgba(255,255,255,.05) 30%, rgba(255,255,255,.11) 50%, rgba(255,255,255,.05) 70%);
+}
+
+/* ---------------- AMOLED ---------------- */
+[data-theme="amoled"] {
+  --bg: #000000;
+  --bg-blur: rgba(0,0,0,.74);
+  --bg-elevated: #0B0B0D;
+  --bg-soft: rgba(255,255,255,.07);
+  --bg-soft-strong: rgba(255,255,255,.13);
+  --text: #FFFFFF;
+  --text-secondary: #9C9CA3;
+  --text-tertiary: #5A5A60;
+  --on-accent: #000000;
+  --accent: #8FF0D6;
+  --accent-rgb: 143,240,214;
+  --accent-2: #7D7AFF;
+  --accent-grad: linear-gradient(135deg, #8FF0D6, #7AC8FF 55%, #7D7AFF);
+  --accent-soft: rgba(143,240,214,.14);
+  --border: rgba(255,255,255,.10);
+  --divider: rgba(255,255,255,.08);
+  --success: #30D158;
+  --warning: #FFB23F;
+  --danger: #FF453A;
+  --scroll-thumb: rgba(255,255,255,.16);
+  --shadow-card: 0 0 0 1px rgba(255,255,255,.05), 0 16px 40px -12px rgba(143,240,214,.08);
+  --skeleton: linear-gradient(100deg, rgba(255,255,255,.04) 30%, rgba(255,255,255,.09) 50%, rgba(255,255,255,.04) 70%);
+}
+
+/* ---------------- CYBERPUNK ---------------- */
+[data-theme="cyberpunk"] {
+  --bg: #0A0414;
+  --bg-blur: rgba(10,4,20,.74);
+  --bg-elevated: #160A29;
+  --bg-soft: rgba(255,46,154,.09);
+  --bg-soft-strong: rgba(255,46,154,.16);
+  --text: #F3E9FF;
+  --text-secondary: #B79CDB;
+  --text-tertiary: #6E5C8C;
+  --on-accent: #0A0414;
+  --accent: #00F0FF;
+  --accent-rgb: 0,240,255;
+  --accent-2: #FF2E9A;
+  --accent-grad: linear-gradient(135deg, #00F0FF, #C04CFF 55%, #FF2E9A);
+  --accent-soft: rgba(0,240,255,.14);
+  --border: rgba(192,76,255,.25);
+  --divider: rgba(192,76,255,.16);
+  --success: #2BFFB0;
+  --warning: #FFD23F;
+  --danger: #FF3B6E;
+  --scroll-thumb: rgba(255,46,154,.3);
+  --shadow-card: 0 0 0 1px rgba(192,76,255,.15), 0 0 32px -6px rgba(255,46,154,.30);
+  --skeleton: linear-gradient(100deg, rgba(192,76,255,.08) 30%, rgba(192,76,255,.18) 50%, rgba(192,76,255,.08) 70%);
+  --glow: 0 0 12px currentColor;
+}
+
+/* ---------------- PAPER ---------------- */
+[data-theme="paper"] {
+  --bg: #F3EBDA;
+  --bg-blur: rgba(243,235,218,.82);
+  --bg-elevated: #FBF6EA;
+  --bg-soft: rgba(120,90,50,.08);
+  --bg-soft-strong: rgba(120,90,50,.14);
+  --text: #3A2C1E;
+  --text-secondary: #8A7558;
+  --text-tertiary: #B3A284;
+  --on-accent: #FBF6EA;
+  --accent: #AD6A2C;
+  --accent-rgb: 173,106,44;
+  --accent-2: #C98A4B;
+  --accent-grad: linear-gradient(135deg, #AD6A2C, #C98A4B);
+  --accent-soft: rgba(173,106,44,.14);
+  --border: rgba(120,90,50,.18);
+  --divider: rgba(120,90,50,.13);
+  --success: #5A8F4F;
+  --warning: #C98A2C;
+  --danger: #B5483A;
+  --scroll-thumb: rgba(120,90,50,.25);
+  --shadow-card: 0 1px 2px rgba(80,60,30,.06), 0 10px 26px -10px rgba(80,60,30,.22);
+  --skeleton: linear-gradient(100deg, rgba(120,90,50,.07) 30%, rgba(120,90,50,.14) 50%, rgba(120,90,50,.07) 70%);
+  --font-sans: 'Iowan Old Style', 'New York', Georgia, var(--font-sans);
+}
+
+/* ---------------- FOREST ---------------- */
+[data-theme="forest"] {
+  --bg: #0E1812;
+  --bg-blur: rgba(14,24,18,.78);
+  --bg-elevated: #16231B;
+  --bg-soft: rgba(120,200,150,.09);
+  --bg-soft-strong: rgba(120,200,150,.15);
+  --text: #E7F2EA;
+  --text-secondary: #93AE9D;
+  --text-tertiary: #5C7165;
+  --on-accent: #06120A;
+  --accent: #4ED98A;
+  --accent-rgb: 78,217,138;
+  --accent-2: #A9DD5C;
+  --accent-grad: linear-gradient(135deg, #4ED98A, #A9DD5C);
+  --accent-soft: rgba(78,217,138,.15);
+  --border: rgba(120,200,150,.16);
+  --divider: rgba(120,200,150,.12);
+  --success: #4ED98A;
+  --warning: #E0B84B;
+  --danger: #E0654B;
+  --scroll-thumb: rgba(120,200,150,.25);
+  --shadow-card: 0 1px 2px rgba(0,0,0,.25), 0 12px 28px -10px rgba(0,0,0,.45);
+  --skeleton: linear-gradient(100deg, rgba(120,200,150,.06) 30%, rgba(120,200,150,.13) 50%, rgba(120,200,150,.06) 70%);
+}
+
+/* ---------------- ANIME ---------------- */
+[data-theme="anime"] {
+  --bg: #FFF3F8;
+  --bg-blur: rgba(255,243,248,.8);
+  --bg-elevated: #FFFFFF;
+  --bg-soft: rgba(255,111,181,.09);
+  --bg-soft-strong: rgba(255,111,181,.16);
+  --text: #4A3550;
+  --text-secondary: #9A82A8;
+  --text-tertiary: #CBB6D6;
+  --on-accent: #FFFFFF;
+  --accent: #FF6FB5;
+  --accent-rgb: 255,111,181;
+  --accent-2: #8C7AE6;
+  --accent-grad: linear-gradient(135deg, #FF6FB5, #B58CF0 55%, #8C7AE6);
+  --accent-soft: rgba(255,111,181,.14);
+  --border: rgba(255,111,181,.18);
+  --divider: rgba(255,111,181,.13);
+  --success: #5FD18C;
+  --warning: #FFB23F;
+  --danger: #FF6090;
+  --scroll-thumb: rgba(255,111,181,.3);
+  --shadow-card: 0 2px 4px rgba(255,111,181,.08), 0 14px 30px -12px rgba(140,122,230,.22);
+  --skeleton: linear-gradient(100deg, rgba(255,111,181,.08) 30%, rgba(255,111,181,.16) 50%, rgba(255,111,181,.08) 70%);
+  --bg-gradient-fancy: radial-gradient(circle at 10% -10%, rgba(255,111,181,.16), transparent 40%), radial-gradient(circle at 100% 0%, rgba(140,122,230,.14), transparent 40%);
+}
+
+/* ---------------- MINIMAL ---------------- */
+[data-theme="minimal"] {
+  --bg: #FAFAFA;
+  --bg-blur: rgba(250,250,250,.85);
+  --bg-elevated: #FFFFFF;
+  --bg-soft: rgba(0,0,0,.04);
+  --bg-soft-strong: rgba(0,0,0,.07);
+  --text: #111111;
+  --text-secondary: #707070;
+  --text-tertiary: #ADADAD;
+  --on-accent: #FFFFFF;
+  --accent: #111111;
+  --accent-rgb: 17,17,17;
+  --accent-2: #444444;
+  --accent-grad: linear-gradient(135deg, #222222, #111111);
+  --accent-soft: rgba(0,0,0,.06);
+  --border: rgba(0,0,0,.12);
+  --divider: rgba(0,0,0,.08);
+  --success: #1F8A4C;
+  --warning: #B5780A;
+  --danger: #C53030;
+  --scroll-thumb: rgba(0,0,0,.18);
+  --shadow-card: 0 0 0 1px rgba(0,0,0,.06);
+  --skeleton: linear-gradient(100deg, rgba(0,0,0,.04) 30%, rgba(0,0,0,.08) 50%, rgba(0,0,0,.04) 70%);
+}
+
+/* Ambient glow used behind the dashboard hero — switched off on Minimal,
+   which deliberately stays flat per its own restrained logic. */
+[data-theme="minimal"] .ambient-glow { display: none; }
+.ambient-glow {
+  position: absolute; inset: 0; z-index: -1; pointer-events: none; overflow: hidden;
+  background:
+    radial-gradient(420px 220px at 12% 0%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 70%),
+    radial-gradient(380px 220px at 100% 8%, color-mix(in srgb, var(--accent-2) 14%, transparent), transparent 70%);
+}
