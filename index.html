@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="id" dir="ltr">
+<head>
+  <meta charset="UTF-8">
+
+  <!-- Viewport: viewport-fit=cover is critical for iOS safe-area insets -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+
+  <title>Catat — Catatan Pintar Offline</title>
+  <meta name="description" content="Aplikasi catatan offline lengkap dengan folder, tag, enkripsi, voice note, wiki-link, graph view, dan banyak lagi.">
+
+  <!-- PWA Manifest -->
+  <link rel="manifest" href="manifest.webmanifest">
+
+  <!-- Theme color (updated dynamically via JS on theme switch) -->
+  <meta name="theme-color" content="#131316">
+
+  <!-- iOS / Safari PWA meta tags -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Catat">
+
+  <!-- Apple touch icons (Safari does NOT use manifest icons for home-screen) -->
+  <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
+  <link rel="apple-touch-icon" sizes="152x152" href="icons/icon-152.png">
+  <link rel="apple-touch-icon" sizes="120x120" href="icons/icon-120.png">
+
+  <!-- Apple launch / splash screens -->
+  <link rel="apple-touch-startup-image" media="(device-width:390px)and(device-height:844px)and(-webkit-device-pixel-ratio:3)" href="icons/splash-1170x2532.png">
+  <link rel="apple-touch-startup-image" media="(device-width:375px)and(device-height:812px)and(-webkit-device-pixel-ratio:3)" href="icons/splash-1125x2436.png">
+  <link rel="apple-touch-startup-image" media="(device-width:414px)and(device-height:896px)and(-webkit-device-pixel-ratio:2)" href="icons/splash-828x1792.png">
+
+  <!-- Favicon chain -->
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+  <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16.png">
+  <link rel="shortcut icon" href="icons/favicon-32.png">
+
+  <!-- Social / OG -->
+  <meta property="og:title" content="Catat — Catatan Pintar Offline">
+  <meta property="og:description" content="Catatan lengkap offline: folder, tag, enkripsi, voice note, wiki-link, graph view, dan lebih banyak.">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="icons/icon-512.png">
+
+  <!-- Windows / Edge pinned -->
+  <meta name="msapplication-TileColor" content="#131316">
+  <meta name="msapplication-TileImage" content="icons/icon-192.png">
+  <meta name="application-name" content="Catat">
+
+  <!-- iOS: disable phone-number detection -->
+  <meta name="format-detection" content="telephone=no">
+  <!-- Security -->
+  <meta name="referrer" content="no-referrer">
+
+  <!-- Stylesheets -->
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/themes.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/animations.css">
+
+  <!-- Anti-FOUC: apply saved theme synchronously before first paint.
+       db.js mirrors the active theme to localStorage on every theme change
+       so we can read it here without waiting for IndexedDB. -->
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('catat_theme_mirror') || 'dark';
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
+
+  <!-- Critical inline tweaks — everything else is in the CSS files -->
+  <style>
+    /* iOS: prevent double-tap zoom on interactive elements */
+    @media (pointer: coarse) {
+      button, a, [role="button"], .tab-btn, .fab, .icon-btn {
+        touch-action: manipulation;
+      }
+    }
+    /* Prevent iOS elastic over-scroll on the outer shell */
+    html, body { overscroll-behavior: none; }
+    /* Extend tabbar padding for iOS home-indicator (belt-and-suspenders for
+       browsers that handle safe-area slightly differently) */
+    .tabbar {
+      padding-bottom: max(env(safe-area-inset-bottom, 0px), 8px) !important;
+    }
+    /* Standalone: push content below the status-bar when using
+       apple-mobile-web-app-status-bar-style: black-translucent */
+    @media all and (display-mode: standalone) {
+      .topbar {
+        padding-top: max(env(safe-area-inset-top, 20px), 20px) !important;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <!-- Splash screen — removed by JS after first render -->
+  <div id="splash" aria-hidden="true" role="presentation">
+    <div class="sp-icon">
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="white"
+           stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+        <polyline points="14,2 14,8 20,8"/>
+        <line x1="16" y1="13" x2="8" y2="13"/>
+        <line x1="16" y1="17" x2="8" y2="17"/>
+        <polyline points="10,9 9,9 8,9"/>
+      </svg>
+    </div>
+    <div class="sp-name">Catat</div>
+    <div class="sp-tag">Catatan pintar · Sepenuhnya offline</div>
+  </div>
+
+  <!-- App shell is built by main.js — body is intentionally empty here -->
+
+  <!-- ES module entry — automatically deferred by browser -->
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

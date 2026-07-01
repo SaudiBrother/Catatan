@@ -1,0 +1,65 @@
+{
+  "name": "Catat — Catatan Pintar Offline",
+  "short_name": "Catat",
+  "description": "Catatan offline lengkap dengan folder, tag, enkripsi AES-256, voice note, wiki-link, graph view, dan banyak lagi.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "portrait",
+  "background_color": "#131316",
+  "theme_color": "#131316",
+  "lang": "id",
+  "dir": "ltr",
+  "categories": ["productivity", "utilities"],
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "icons/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Catatan Baru",
+      "short_name": "Baru",
+      "description": "Buat catatan baru",
+      "url": "./index.html#/note/new",
+      "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Cari Catatan",
+      "short_name": "Cari",
+      "description": "Cari catatan",
+      "url": "./index.html#/search",
+      "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }]
+    }
+  ],
+  "screenshots": [],
+  "prefer_related_applications": false
+}
