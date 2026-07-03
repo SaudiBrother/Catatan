@@ -7,18 +7,23 @@
 import {
   getAllNotes, getAllFolders, getFavoriteNotes, getRecentNotes, getTodayReminders,
   computeStats, getStreak, getBadges, getAllActivity, getTodayActivity, getTimelineForNote,
-  createNote, createFolder, updateFolder, deleteFolder, searchNotes, extractChecklist,
+  createNote, deleteFolder, searchNotes, extractChecklist,
   getAllReminders, deleteReminder, getSetting, setSetting, disableLock, setupLock,
   setupFingerprint, isWebAuthnAvailable, exportAllData, importAllData, countWords,
   folderPath, folderDepth, extractWikiLinks, findNoteByTitle, getNotesByFolder,
-  _dbAll, deleteNote, toggleFavorite, updateNote,
+  _dbAll, deleteNote, toggleFavorite, updateNote, getActiveNotes, getArchivedNotes,
+  getTrashedNotes, togglePin, toggleArchive, restoreNote, permanentlyDeleteNote,
+  emptyTrash, duplicateNote, isFolderLocked, getMasterKey,
 } from './db.js';
 
 import {
   $, $$, icon, escapeHtml, fmtRelative, fmtBytes, openSheet, sheetMenu,
-  promptDialog, confirmDialog, showToast, FOLDER_COLORS, FOLDER_EMOJI,
+  promptDialog, confirmDialog, showToast,
   installCardHTML, wireInstallCard, updateThemeColorMeta, canShowInstallCard,
+  wireSwipeRows, hapticTap,
 } from './ui.js';
+import { openFolderEditorSheet, guardCategoryAccess } from './categories.js';
+import { ensureAuthenticated } from './auth.js';
 
 /* ── helpers ── */
 const THEMES = ['light', 'dark', 'amoled', 'cyberpunk', 'paper', 'forest', 'anime', 'minimal'];
@@ -32,7 +37,7 @@ const THEME_BG_MAP = {
 };
 
 function noteColorDot(note) {
-  return `<span style="width:9px;height:9px;border-radius:50%;background:${note.color || 'var(--accent)'};flex-shrink:0;display:inline-block"></span>`;
+  return `<span style="width:9px;height:9px;border-radius:50%;background:${note.color || 'var(--accent)'};flex-shrink:0;display:inline-block;margin-top:5px"></span>`;
 }
 function checklistBadge(content) {
   const cl = extractChecklist(content);
@@ -40,48 +45,80 @@ function checklistBadge(content) {
   const done = cl.filter(c => c.done).length;
   return `<span class="check-pill">${done}/${cl.length}</span>`;
 }
-function noteRow(note, ctx) {
-  const snippet = (note.content || '').replace(/<[^>]+>/g, ' ').trim().slice(0, 60);
-  return `<button class="note-row" data-note-id="${note.id}" style="text-align:left;width:100%;display:flex;align-items:flex-start;gap:10px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--r-lg);padding:12px 14px;transition:transform .14s var(--ease-spring)">
-    ${noteColorDot(note)}
-    <div style="flex:1;min-width:0">
-      <div style="display:flex;align-items:center;gap:6px;font-weight:700;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${note.favorite ? '⭐ ' : ''}${escapeHtml(note.title || 'Tanpa judul')}</div>
-      ${snippet ? `<div style="color:var(--text-secondary);font-size:13px;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(snippet)}</div>` : ''}
-      <div style="display:flex;align-items:center;gap:6px;margin-top:4px;flex-wrap:wrap">
-        <span style="color:var(--text-tertiary);font-size:12px">${fmtRelative(note.updatedAt)}</span>
-        ${checklistBadge(note.content)}
-        ${(note.tags || []).slice(0, 2).map(t => `<span style="font-size:11px;font-weight:700;color:var(--accent);background:var(--accent-soft);border-radius:99px;padding:2px 7px">#${escapeHtml(t)}</span>`).join('')}
+function noteRow(note, ctx, context = 'normal') {
+  const locked = note._locked || note.locked;
+  const snippet = locked ? 'Konten tersembunyi' : (note.content || '').replace(/<[^>]+>/g, ' ').trim().slice(0, 64);
+  const actionsHTML = context === 'archive'
+    ? `<button class="swipe-act" data-swipe-act="unarchive" style="background:var(--accent)" aria-label="Keluarkan dari arsip">${icon('archiveRestore', 18)}</button>
+       <button class="swipe-act" data-swipe-act="delete" style="background:var(--danger)" aria-label="Hapus">${icon('trash', 18)}</button>`
+    : `<button class="swipe-act" data-swipe-act="pin" style="background:var(--warning)" aria-label="Sematkan">${icon(note.pinned ? 'pinOff' : 'pin', 18)}</button>
+       <button class="swipe-act" data-swipe-act="archive" style="background:var(--accent)" aria-label="Arsipkan">${icon('archive', 18)}</button>
+       <button class="swipe-act" data-swipe-act="delete" style="background:var(--danger)" aria-label="Hapus">${icon('trash', 18)}</button>`;
+  return `<div class="swipe-row" data-note-id="${note.id}">
+    <div class="swipe-actions-bg">${actionsHTML}</div>
+    <button class="note-row swipe-content" data-note-id="${note.id}">
+      <span class="dot" style="background:${note.color || 'var(--accent)'}"></span>
+      <div class="body">
+        <div class="title-line">${note.pinned ? icon('pin', 12) : ''}${locked ? icon('lock', 12) : ''}${note.favorite ? icon('star', 13) : ''}<span class="truncate">${escapeHtml(locked ? (note.title || 'Catatan terkunci') : (note.title || 'Tanpa judul'))}</span></div>
+        ${snippet ? `<div class="snippet truncate">${escapeHtml(snippet)}</div>` : ''}
+        <div class="meta">${fmtRelative(note.updatedAt)}${(note.tags || []).length ? ' · #' + escapeHtml(note.tags[0]) : ''}</div>
       </div>
-    </div>
-    ${icon('chevronRight', 17, 'style="color:var(--text-tertiary);flex-shrink:0;margin-top:6px"')}
-  </button>`;
+      ${checklistBadge(note.content)}
+      <span class="chev">${icon('chevronRight', 17)}</span>
+    </button>
+  </div>`;
 }
-function wireNoteRows(container, ctx) {
-  $$('[data-note-id]', container).forEach(el => {
+function wireNoteRows(container, ctx, context = 'normal') {
+  $$('.swipe-content[data-note-id]', container).forEach(el => {
     el.onclick = () => ctx.navigate('#/note/' + el.dataset.noteId);
-    el.addEventListener('contextmenu', async (e) => {
-      e.preventDefault();
-      const choice = await sheetMenu([
-        { value: 'fav', icon: 'star', label: 'Toggle Favorit' },
-        { value: 'delete', icon: 'trash', label: 'Hapus', danger: true },
-      ]);
-      if (choice === 'fav') { await toggleFavorite(el.dataset.noteId); ctx.rerender(); }
-      if (choice === 'delete') {
-        const ok = await confirmDialog('Hapus catatan ini?', { okLabel: 'Hapus', danger: true });
-        if (ok) { await deleteNote(el.dataset.noteId); ctx.rerender(); showToast('Catatan dihapus', { icon: 'trash' }); }
-      }
-    });
+    let pressTimer;
+    el.addEventListener('pointerdown', () => { pressTimer = setTimeout(() => openNoteContextMenu(el.dataset.noteId, ctx), 480); });
+    ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => el.addEventListener(ev, () => clearTimeout(pressTimer)));
   });
+  // Non-swipeable note cards elsewhere on the page (e.g. the Favorites carousel)
+  $$('[data-note-id]', container).forEach(el => {
+    if (el.closest('.swipe-row')) return; // already wired above
+    el.onclick = () => ctx.navigate('#/note/' + el.dataset.noteId);
+  });
+  wireSwipeRows(container, async (noteId, action) => {
+    if (!noteId) return;
+    if (action === 'pin') { await togglePin(noteId); hapticTap(8); ctx.rerender(); }
+    else if (action === 'archive' || action === 'unarchive') { await toggleArchive(noteId); showToast(action === 'archive' ? 'Diarsipkan' : 'Dikeluarkan dari arsip', { icon: 'archive' }); ctx.rerender(); }
+    else if (action === 'delete') { await deleteNote(noteId); showToast('Dipindah ke Sampah', { icon: 'trash' }); ctx.rerender(); }
+  });
+}
+async function openNoteContextMenu(noteId, ctx) {
+  hapticTap(10);
+  const all = await getAllNotes();
+  const note = all.find(n => n.id === noteId);
+  if (!note) return;
+  const choice = await sheetMenu([
+    { value: 'pin', icon: note.pinned ? 'pinOff' : 'pin', label: note.pinned ? 'Lepas Sematan' : 'Sematkan' },
+    { value: 'fav', icon: 'star', label: note.favorite ? 'Hapus dari Favorit' : 'Tambah ke Favorit' },
+    { value: 'duplicate', icon: 'copy', label: 'Duplikat' },
+    { value: 'archive', icon: note.archived ? 'archiveRestore' : 'archive', label: note.archived ? 'Keluarkan dari Arsip' : 'Arsipkan' },
+    { value: 'delete', icon: 'trash', label: 'Hapus', danger: true },
+  ], { title: note.title || 'Tanpa judul' });
+  if (choice === 'pin') { await togglePin(noteId); ctx.rerender(); }
+  else if (choice === 'fav') { await toggleFavorite(noteId); ctx.rerender(); }
+  else if (choice === 'duplicate') { const copy = await duplicateNote(noteId); showToast('Catatan diduplikat', { icon: 'copy' }); ctx.navigate('#/note/' + copy.id); }
+  else if (choice === 'archive') { await toggleArchive(noteId); ctx.rerender(); }
+  else if (choice === 'delete') {
+    const ok = await confirmDialog('Catatan akan dipindah ke Sampah selama 30 hari.', { title: 'Hapus catatan?', okLabel: 'Hapus', danger: true });
+    if (ok) { await deleteNote(noteId); showToast('Dipindah ke Sampah', { icon: 'trash' }); ctx.rerender(); }
+  }
 }
 
 /* =====================================================================
    1. DASHBOARD
    ===================================================================== */
 export async function renderDashboard(container, params, ctx) {
-  const [recent, favs, allNotes, todayRem, stats, streak] = await Promise.all([
-    getRecentNotes(6), getFavoriteNotes(), getAllNotes(), getTodayReminders(),
+  const [recentRaw, favs, allNotes, todayRem, stats, streak] = await Promise.all([
+    getRecentNotes(8), getFavoriteNotes(), getActiveNotes(), getTodayReminders(),
     computeStats(), getStreak(),
   ]);
+  const pinned = allNotes.filter(n => n.pinned).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+  const recent = recentRaw.filter(n => !n.pinned).slice(0, 6);
   const pendingChecklist = allNotes.flatMap(n => extractChecklist(n.content).filter(c => !c.done).slice(0, 2));
   const today = new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long' });
 
@@ -128,6 +165,11 @@ export async function renderDashboard(container, params, ctx) {
         ${pendingChecklist.slice(0,5).map(c => `<div style="display:flex;align-items:center;gap:10px"><span style="width:18px;height:18px;border-radius:5px;border:2px solid var(--text-tertiary);flex-shrink:0"></span><span style="font-size:14px">${escapeHtml(c.text)}</span></div>`).join('')}
       </div>` : ''}
 
+      <!-- Pinned -->
+      ${pinned.length ? `
+      <div class="section-title">${icon('pin',13)} Disematkan</div>
+      <div class="row-list">${pinned.map(n => noteRow(n, ctx)).join('')}</div>` : ''}
+
       <!-- Favorites -->
       ${favs.length ? `
       <div class="section-title">Favorit</div>
@@ -143,7 +185,7 @@ export async function renderDashboard(container, params, ctx) {
       <!-- Recently edited -->
       <div class="section-title">Terakhir Diedit</div>
       ${recent.length ? `<div class="row-list">${recent.map(n => noteRow(n, ctx)).join('')}</div>`
-        : `<div class="empty-state"><div class="e-icon">📝</div><div class="e-title">Belum ada catatan</div><p>Ketuk tombol + untuk membuat catatan pertama kamu!</p></div>`}
+        : (pinned.length ? '' : `<div class="empty-state"><div class="e-icon">📝</div><div class="e-title">Belum ada catatan</div><p>Ketuk tombol + untuk membuat catatan pertama kamu!</p></div>`)}
 
     </div>
     </main>`;
@@ -160,12 +202,18 @@ export async function renderDashboard(container, params, ctx) {
    2. BROWSE (folders + notes list)
    ===================================================================== */
 export async function renderBrowse(container, params, ctx) {
-  const [allFolders, allNotes] = await Promise.all([getAllFolders(), getAllNotes()]);
+  const [allFolders, allNotes] = await Promise.all([getAllFolders(), getActiveNotes()]);
   const folderId = params.folderId || null;
   const folder = folderId ? allFolders.find(f => f.id === folderId) : null;
+
+  if (folder && isFolderLocked(allFolders, folderId) && !getMasterKey()) {
+    const ok = await ensureAuthenticated({ reason: `"${folder.name}" terkunci. Masukkan PIN untuk membukanya.` });
+    if (!ok) { ctx.back(); return; }
+  }
+
   const notes = folderId ? allNotes.filter(n => n.folderId === folderId) : allNotes.filter(n => !n.folderId);
   const childFolders = allFolders.filter(f => f.parentId === folderId);
-  const sorted = [...notes].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+  const sorted = [...notes].sort((a, b) => (b.pinned === a.pinned ? 0 : b.pinned ? 1 : -1) || new Date(b.updatedAt) - new Date(a.updatedAt));
 
   const noteCountOf = (fid) => {
     const count = allNotes.filter(n => n.folderId === fid).length;
@@ -177,6 +225,7 @@ export async function renderBrowse(container, params, ctx) {
     <div class="topbar">
       ${folderId ? `<button class="icon-btn plain" id="btnBrowseBack">${icon('chevronLeft', 22)}</button>` : ''}
       <span class="tb-title">${folder ? escapeHtml(folder.name) : 'Semua Catatan'}</span>
+      <button class="icon-btn plain" id="btnManageCategories" aria-label="Kelola Kategori">${icon('category', 19)}</button>
       <button class="icon-btn plain" id="btnNewFolder">${icon('folderPlus', 20)}</button>
       <button class="icon-btn plain" id="btnSortMenu">${icon('shuffle', 20)}</button>
     </div>
@@ -187,6 +236,7 @@ export async function renderBrowse(container, params, ctx) {
       <div class="folder-grid">
         ${childFolders.map(f => `
           <button class="folder-card press-scale" data-folder="${f.id}" style="background:${f.color || '#5E5CE6'}">
+            ${f.locked ? `<span class="folder-lock-badge">${icon('lock', 12)}</span>` : ''}
             <span style="font-size:28px">${f.icon || '📁'}</span>
             <div>
               <div style="font-weight:800;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(f.name)}</div>
@@ -200,7 +250,7 @@ export async function renderBrowse(container, params, ctx) {
       <div class="row-list">${sorted.map(n => noteRow(n, ctx)).join('')}</div>`
       : `<div class="empty-state" style="margin-top:${childFolders.length ? '20px' : '60px'}">
           <div class="e-icon">📂</div>
-          <div class="e-title">Folder ini kosong</div>
+          <div class="e-title">${folderId ? 'Kategori ini kosong' : 'Tanpa Kategori kosong'}</div>
           <p>Buat catatan baru atau pindahkan catatan ke sini</p>
         </div>`}
 
@@ -209,85 +259,122 @@ export async function renderBrowse(container, params, ctx) {
 
   const btnBrowseBack = $('#btnBrowseBack', container);
   if (btnBrowseBack) btnBrowseBack.onclick = () => ctx.back();
-  $('#btnNewFolder', container).onclick = () => openNewFolderSheet(folderId, ctx);
+  $('#btnManageCategories', container).onclick = () => ctx.navigate('#/categories');
+  $('#btnNewFolder', container).onclick = () => openFolderEditorSheet(null, folderId, ctx);
   $('#btnSortMenu', container).onclick = () => {}; // future: sort options sheet
 
   $$('[data-folder]', container).forEach(btn => {
-    btn.onclick = () => ctx.navigate('#/browse/' + btn.dataset.folder);
+    btn.onclick = async () => {
+      const f = allFolders.find(x => x.id === btn.dataset.folder);
+      const ok = await guardCategoryAccess(f?.id, allFolders);
+      if (ok) ctx.navigate('#/browse/' + btn.dataset.folder);
+    };
     btn.addEventListener('contextmenu', async (e) => {
       e.preventDefault();
+      const f = allFolders.find(x => x.id === btn.dataset.folder);
       const choice = await sheetMenu([
         { value: 'rename', icon: 'pencil', label: 'Ubah nama/warna/ikon' },
-        { value: 'delete', icon: 'trash', label: 'Hapus folder', danger: true },
-      ], { title: allFolders.find(f => f.id === btn.dataset.folder)?.name || 'Folder' });
-      if (choice === 'rename') openEditFolderSheet(btn.dataset.folder, allFolders, ctx);
+        { value: 'manage', icon: 'category', label: 'Kelola Kategori' },
+        { value: 'delete', icon: 'trash', label: 'Hapus kategori', danger: true },
+      ], { title: f?.name || 'Kategori' });
+      if (choice === 'rename') openFolderEditorSheet(f, f?.parentId ?? null, ctx);
+      if (choice === 'manage') ctx.navigate('#/categories');
       if (choice === 'delete') {
-        const ok = await confirmDialog('Catatan dalam folder ini akan dipindah ke Tanpa Folder.', { title: 'Hapus folder?', okLabel: 'Hapus', danger: true });
-        if (ok) { await deleteFolder(btn.dataset.folder); ctx.rerender(); }
+        const ok = await confirmDialog('Catatan dalam kategori ini akan dipindah ke Tanpa Kategori.', { title: 'Hapus kategori?', okLabel: 'Hapus', danger: true });
+        if (ok) { await deleteFolder(btn.dataset.folder); ctx.rerender(); showToast('Kategori dihapus', { icon: 'trash' }); }
       }
     });
   });
   wireNoteRows(container, ctx);
 }
 
-async function openNewFolderSheet(parentId, ctx) {
-  const { el, close } = openSheet(`
-    <input class="field" id="nfName" placeholder="Nama folder" autocomplete="off" style="margin-bottom:12px">
-    <div class="field-label">Warna</div>
-    <div class="color-pill-bar" id="nfColors" style="margin-bottom:12px">
-      ${FOLDER_COLORS.map((c,i) => `<span class="color-dot${i===0?' active':''}" data-fc="${c}" style="background:${c}"></span>`).join('')}
+/* =====================================================================
+   2b. ARCHIVE
+   ===================================================================== */
+export async function renderArchive(container, params, ctx) {
+  const notes = await getArchivedNotes();
+  container.innerHTML = `
+    <div class="topbar">
+      <button class="icon-btn plain" id="btnArchiveBack">${icon('chevronLeft', 22)}</button>
+      <span class="tb-title">Arsip</span>
+      <span style="width:40px"></span>
     </div>
-    <div class="field-label">Ikon</div>
-    <div style="display:grid;grid-template-columns:repeat(8,1fr);gap:6px;margin-bottom:16px" id="nfEmoji">
-      ${FOLDER_EMOJI.map((e,i) => `<button class="icon-btn${i===0?' active':''}" data-fe="${e}" style="font-size:18px;height:38px">${e}</button>`).join('')}
+    <main style="flex:1;overflow-y:auto;padding-bottom:calc(86px + var(--safe-b))">
+    <div class="view-pad stagger">
+      ${notes.length ? `<div class="row-list">${notes.map(n => noteRow(n, ctx, 'archive')).join('')}</div>` : `
+      <div class="empty-state" style="margin-top:70px">
+        <div class="e-icon">🗄️</div>
+        <div class="e-title">Arsip kosong</div>
+        <p>Geser catatan ke kiri atau pilih "Arsipkan" dari menu "•••" untuk menyingkirkannya dari daftar utama tanpa menghapusnya.</p>
+      </div>`}
     </div>
-    <button class="btn btn-primary btn-block" id="nfSave">Buat Folder</button>
-  `, { title: 'Folder Baru' });
-
-  let selColor = FOLDER_COLORS[0], selEmoji = FOLDER_EMOJI[0];
-  $$('[data-fc]', el).forEach(s => s.onclick = () => {
-    selColor = s.dataset.fc;
-    $$('[data-fc]', el).forEach(x => x.classList.remove('active'));
-    s.classList.add('active');
-  });
-  $$('[data-fe]', el).forEach(b => b.onclick = () => {
-    selEmoji = b.dataset.fe;
-    $$('[data-fe]', el).forEach(x => x.classList.remove('active'));
-    b.classList.add('active');
-  });
-  setTimeout(() => $('#nfName', el).focus(), 280);
-  $('#nfSave', el).onclick = async () => {
-    const name = $('#nfName', el).value.trim();
-    if (!name) return;
-    await createFolder({ name, parentId, color: selColor, icon: selEmoji });
-    close(); ctx.rerender();
-    showToast(`Folder "${name}" dibuat`, { icon: 'folderPlus' });
-  };
+    </main>`;
+  $('#btnArchiveBack', container).onclick = () => ctx.back();
+  wireNoteRows(container, ctx, 'archive');
 }
-async function openEditFolderSheet(folderId, allFolders, ctx) {
-  const folder = allFolders.find(f => f.id === folderId);
-  if (!folder) return;
-  const { el, close } = openSheet(`
-    <input class="field" id="efName" value="${escapeHtml(folder.name)}" style="margin-bottom:12px">
-    <div class="color-pill-bar" id="efColors" style="margin-bottom:12px">
-      ${FOLDER_COLORS.map(c => `<span class="color-dot${c===folder.color?' active':''}" data-fc="${c}" style="background:${c};${c===folder.color?'box-shadow:0 0 0 2px var(--accent)':''}"></span>`).join('')}
-    </div>
-    <div style="display:grid;grid-template-columns:repeat(8,1fr);gap:6px;margin-bottom:16px" id="efEmoji">
-      ${FOLDER_EMOJI.map(e => `<button class="icon-btn${e===folder.icon?' active':''}" data-fe="${e}" style="font-size:18px;height:38px">${e}</button>`).join('')}
-    </div>
-    <button class="btn btn-primary btn-block" id="efSave">Simpan Perubahan</button>
-  `, { title: 'Edit Folder' });
 
-  let selColor = folder.color, selEmoji = folder.icon;
-  $$('[data-fc]', el).forEach(s => s.onclick = () => { selColor = s.dataset.fc; $$('[data-fc]', el).forEach(x => x.classList.remove('active')); s.classList.add('active'); });
-  $$('[data-fe]', el).forEach(b => b.onclick = () => { selEmoji = b.dataset.fe; $$('[data-fe]', el).forEach(x => x.classList.remove('active')); b.classList.add('active'); });
-  $('#efSave', el).onclick = async () => {
-    const name = $('#efName', el).value.trim();
-    if (!name) return;
-    await updateFolder(folderId, { name, color: selColor, icon: selEmoji });
-    close(); ctx.rerender();
-  };
+/* =====================================================================
+   2c. TRASH ("Sampah") — soft-deleted notes, auto-purged after 30 days
+   ===================================================================== */
+function trashRow(note) {
+  const daysLeft = Math.max(0, 30 - Math.floor((Date.now() - new Date(note.deletedAt).getTime()) / 86400000));
+  return `<div class="note-row" data-trash-id="${note.id}" style="display:flex;align-items:flex-start;gap:10px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--r-lg);padding:12px 14px">
+    ${noteColorDot(note)}
+    <div style="flex:1;min-width:0">
+      <div style="font-weight:700;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(note.title || 'Tanpa judul')}</div>
+      <div style="color:var(--text-tertiary);font-size:12px;margin-top:3px">Dihapus ${fmtRelative(note.deletedAt)} · terhapus permanen dalam ${daysLeft} hari</div>
+    </div>
+    <button class="icon-btn plain" data-restore="${note.id}" aria-label="Pulihkan">${icon('history', 18)}</button>
+    <button class="icon-btn plain" data-purge="${note.id}" aria-label="Hapus permanen">${icon('trash', 18)}</button>
+  </div>`;
 }
+export async function renderTrash(container, params, ctx) {
+  const notes = await getTrashedNotes();
+  container.innerHTML = `
+    <div class="topbar">
+      <button class="icon-btn plain" id="btnTrashBack">${icon('chevronLeft', 22)}</button>
+      <span class="tb-title">Sampah</span>
+      ${notes.length ? `<button class="icon-btn plain" id="btnEmptyTrash" aria-label="Kosongkan Sampah">${icon('close', 20)}</button>` : '<span style="width:40px"></span>'}
+    </div>
+    <main style="flex:1;overflow-y:auto;padding-bottom:calc(86px + var(--safe-b))">
+    <div class="view-pad stagger">
+      ${notes.length ? `
+      <div class="info-banner" style="margin-bottom:16px">
+        ${icon('info', 18)}
+        <p>Catatan di sini otomatis terhapus permanen 30 hari setelah dipindahkan.</p>
+      </div>
+      <div class="row-list">${notes.map(trashRow).join('')}</div>` : `
+      <div class="empty-state" style="margin-top:70px">
+        <div class="e-icon">🗑️</div>
+        <div class="e-title">Sampah kosong</div>
+        <p>Catatan yang kamu hapus akan singgah di sini selama 30 hari sebelum benar-benar hilang.</p>
+      </div>`}
+    </div>
+    </main>`;
+  $('#btnTrashBack', container).onclick = () => ctx.back();
+  $('#btnEmptyTrash', container)?.addEventListener('click', async () => {
+    const ok = await confirmDialog('Semua catatan di Sampah akan dihapus permanen. Tindakan ini tidak bisa dibatalkan.', { title: 'Kosongkan Sampah?', okLabel: 'Kosongkan', danger: true });
+    if (!ok) return;
+    const n = await emptyTrash();
+    showToast(`${n} catatan dihapus permanen`, { icon: 'trash' });
+    ctx.rerender();
+  });
+  $$('[data-restore]', container).forEach(b => b.onclick = async () => {
+    await restoreNote(b.dataset.restore);
+    showToast('Catatan dipulihkan', { icon: 'history' });
+    ctx.rerender();
+  });
+  $$('[data-purge]', container).forEach(b => b.onclick = async () => {
+    const ok = await confirmDialog('Catatan ini akan dihapus permanen dan tidak bisa dipulihkan.', { title: 'Hapus permanen?', okLabel: 'Hapus', danger: true });
+    if (!ok) return;
+    await permanentlyDeleteNote(b.dataset.purge);
+    showToast('Dihapus permanen', { icon: 'trash' });
+    ctx.rerender();
+  });
+}
+
+/* Folder create/edit/lock sheets now live in categories.js (openFolderEditorSheet)
+   so the Browse view and the "Kelola Kategori" screen share one implementation. */
 
 /* =====================================================================
    3. SEARCH
@@ -375,7 +462,7 @@ export async function renderGraph(container, params, ctx) {
     </div>`;
 
   const canvas = $('#graphCanvas', container);
-  if (is3D) runGraph3D(canvas, allNotes, ctx); else runGraph2D(canvas, allNotes, ctx);
+  const stopGraph = is3D ? runGraph3D(canvas, allNotes, ctx) : runGraph2D(canvas, allNotes, ctx);
 
   $('#btn3DToggle', container).onclick = () => ctx.navigate('#/graph' + (is3D ? '' : '/3d'));
   $('#btnGraphSearch', container).onclick = async () => {
@@ -383,6 +470,10 @@ export async function renderGraph(container, params, ctx) {
     /* highlight handled inside graph engine via custom event */
     if (q) document.dispatchEvent(new CustomEvent('graph:search', { detail: q }));
   };
+
+  /* Dikembalikan ke router (main.js) supaya loop animasi & listener dihentikan
+     saat pengguna berpindah dari tampilan Graf ke tampilan lain. */
+  return stopGraph;
 }
 
 function runGraph2D(canvas, notes, ctx) {
@@ -493,8 +584,13 @@ function runGraph2D(canvas, notes, ctx) {
   $('#gZoomOut', canvas.parentElement.parentElement).onclick = () => { zoom = Math.max(0.2, zoom * 0.83); };
   $('#gCenter', canvas.parentElement.parentElement).onclick = () => { zoom = 1; panX = 0; panY = 0; };
 
-  document.addEventListener('graph:search', (e) => { highlighted = e.detail; }, { once: false });
-  canvas.addEventListener('remove', () => cancelAnimationFrame(raf));
+  const onGraphSearch = (e) => { highlighted = e.detail; };
+  document.addEventListener('graph:search', onGraphSearch);
+
+  return () => {
+    cancelAnimationFrame(raf);
+    document.removeEventListener('graph:search', onGraphSearch);
+  };
 }
 
 function runGraph3D(canvas, notes, ctx) {
@@ -575,15 +671,17 @@ function runGraph3D(canvas, notes, ctx) {
       if (dx * dx + dy * dy < (7 * scale + 6) ** 2) { ctx.navigate('#/note/' + n.id); break; }
     }
   });
-  canvas.addEventListener('remove', () => cancelAnimationFrame(raf));
+
+  return () => cancelAnimationFrame(raf);
 }
 
 /* =====================================================================
    5. SETTINGS
    ===================================================================== */
 export async function renderSettings(container, params, ctx) {
-  const [currentTheme, lockCfg, streak, stats] = await Promise.all([
+  const [currentTheme, lockCfg, streak, stats, archived, trashed] = await Promise.all([
     getSetting('theme', 'dark'), getSetting('lock'), getStreak(), computeStats(),
+    getArchivedNotes(), getTrashedNotes(),
   ]);
   const badges = await getBadges({ ...stats, streak });
   const webAuthnOk = await isWebAuthnAvailable();
@@ -621,6 +719,26 @@ export async function renderSettings(container, params, ctx) {
           </button>`).join('')}
       </div>
 
+      <!-- Organization -->
+      <div class="section-title">Organisasi</div>
+      <div class="settings-group">
+        <div class="settings-row" id="btnGotoCategories">
+          <span class="si" style="background:#5E5CE6">${icon('category', 16)}</span>
+          <div class="stext"><b>Kelola Kategori</b><span>Urutkan, kunci, ganti nama & warna</span></div>
+          ${icon('chevronRight', 18)}
+        </div>
+        <div class="settings-row" id="btnGotoArchive">
+          <span class="si" style="background:#FF9F0A">${icon('archive', 16)}</span>
+          <div class="stext"><b>Arsip</b><span>${archived.length} catatan diarsipkan</span></div>
+          ${icon('chevronRight', 18)}
+        </div>
+        <div class="settings-row" id="btnGotoTrash">
+          <span class="si" style="background:#8E8E93">${icon('trash', 16)}</span>
+          <div class="stext"><b>Sampah</b><span>${trashed.length} catatan · terhapus permanen setelah 30 hari</span></div>
+          ${icon('chevronRight', 18)}
+        </div>
+      </div>
+
       <!-- Security -->
       <div class="section-title">Keamanan</div>
       <div class="settings-group">
@@ -635,6 +753,7 @@ export async function renderSettings(container, params, ctx) {
           <div class="stext"><b>Buka dengan Sidik Jari</b><span>Akses cepat tanpa ketik PIN</span></div>
           <button class="btn btn-sm btn-soft" id="fpBtn">${lockCfg.fingerprint ? 'Sudah diatur' : 'Siapkan'}</button>
         </div>` : ''}
+        <p class="muted" style="padding:10px 14px 4px;font-size:12px">PIN yang sama juga dipakai untuk mengunci kategori atau catatan tertentu dari editor, walau Kunci Aplikasi ini nonaktif.</p>
       </div>
 
       <!-- Data -->
@@ -659,7 +778,7 @@ export async function renderSettings(container, params, ctx) {
         <div class="stat-tile"><b>${stats.totalWords.toLocaleString('id')}</b><span>Total kata</span></div>
         <div class="stat-tile"><b>${stats.photos}</b><span>Foto</span></div>
         <div class="stat-tile"><b>${stats.audio}</b><span>Voice note</span></div>
-        <div class="stat-tile"><b>${stats.totalFolders}</b><span>Folder</span></div>
+        <div class="stat-tile"><b>${stats.totalFolders}</b><span>Kategori</span></div>
         <div class="stat-tile"><b>${stats.totalLinks}</b><span>Wiki link</span></div>
       </div>
 
@@ -678,7 +797,7 @@ export async function renderSettings(container, params, ctx) {
 
       <!-- App info + install banner at bottom -->
       <div id="installCardSlot">${installCardHTML()}</div>
-      <p style="text-align:center;color:var(--text-tertiary);font-size:12px;margin-top:16px">Catat v1.0 · Semua data tersimpan di perangkat kamu · Tidak perlu internet</p>
+      <p style="text-align:center;color:var(--text-tertiary);font-size:12px;margin-top:16px">Catat v2.1 · Semua data tersimpan di perangkat kamu · Tidak perlu internet</p>
     </div>
     </main>`;
 
@@ -692,6 +811,10 @@ export async function renderSettings(container, params, ctx) {
     updateThemeColorMeta(THEME_BG_MAP[t] || '#131316');
     ctx.rerender();
   });
+
+  $('#btnGotoCategories', container).onclick = () => ctx.navigate('#/categories');
+  $('#btnGotoArchive', container).onclick = () => ctx.navigate('#/archive');
+  $('#btnGotoTrash', container).onclick = () => ctx.navigate('#/trash');
 
   // Lock toggle
   $('#lockToggle', container)?.addEventListener('click', async () => {

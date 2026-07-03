@@ -13,8 +13,11 @@ export function escapeHtml(s) {
 }
 
 export function debounce(fn, ms) {
-  let t;
-  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+  let t, lastArgs;
+  const wrapped = (...args) => { lastArgs = args; clearTimeout(t); t = setTimeout(() => { t = null; fn(...lastArgs); }, ms); };
+  wrapped.flush = () => { if (t) { clearTimeout(t); t = null; fn(...lastArgs); } };
+  wrapped.cancel = () => { clearTimeout(t); t = null; };
+  return wrapped;
 }
 
 export function fmtRelative(iso) {
@@ -94,6 +97,31 @@ const ICONS = {
   shield: '<path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6Z"/>',
   type: '<polyline points="5,7 5,4 19,4 19,7"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="9" y1="20" x2="15" y2="20"/>',
   refresh: '<path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21,3 21,8 16,8"/>',
+  /* ---- Added for the v2 feature set (undo/redo, categories, lists, share, etc.) ---- */
+  undo: '<path d="M7 7 3 11l4 4"/><path d="M3 11h11.5a5.5 5.5 0 0 1 0 11H12"/>',
+  redo: '<path d="M17 7l4 4-4 4"/><path d="M21 11H9.5a5.5 5.5 0 0 0 0 11H12"/>',
+  pin: '<path d="M9 4.5h6l-.8 5.8L18 14v2H6v-2l3.8-3.7Z"/><line x1="12" y1="16" x2="12" y2="21.5"/>',
+  pinOff: '<path d="M9 4.5h6l-.8 5.8L18 14v2h-3"/><line x1="12" y1="16" x2="12" y2="21.5"/><line x1="4" y1="3" x2="20" y2="21"/>',
+  archive: '<rect x="3" y="4" width="18" height="5" rx="1.6"/><path d="M5 9.3V18a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9.3"/><line x1="10" y1="13.2" x2="14" y2="13.2"/>',
+  archiveRestore: '<rect x="3" y="4" width="18" height="5" rx="1.6"/><path d="M5 9.3V18a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9.3"/><polyline points="9.3,15.5 12,12.7 14.7,15.5"/><line x1="12" y1="12.7" x2="12" y2="19"/>',
+  grip: '<circle cx="9" cy="6" r="1.3"/><circle cx="15" cy="6" r="1.3"/><circle cx="9" cy="12" r="1.3"/><circle cx="15" cy="12" r="1.3"/><circle cx="9" cy="18" r="1.3"/><circle cx="15" cy="18" r="1.3"/>',
+  moreVert: '<circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/>',
+  shareIcon: '<path d="M12 3v12"/><polyline points="8,7 12,3 16,7"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/>',
+  info: '<circle cx="12" cy="12" r="9"/><line x1="12" y1="11" x2="12" y2="16.2"/><circle cx="12" cy="7.6" r="1.05" fill="currentColor" stroke="none"/>',
+  qrcode: '<rect x="3" y="3" width="7" height="7" rx="1.2"/><rect x="14" y="3" width="7" height="7" rx="1.2"/><rect x="3" y="14" width="7" height="7" rx="1.2"/><rect x="14.5" y="14.5" width="2.6" height="2.6" rx="0.5"/><rect x="18.4" y="14.5" width="2.6" height="2.6" rx="0.5"/><rect x="14.5" y="18.4" width="2.6" height="2.6" rx="0.5"/><rect x="18.4" y="18.4" width="2.6" height="2.6" rx="0.5"/>',
+  speaker: '<path d="M4 9.2v5.6h3.6l4.7 3.7V5.5L7.6 9.2Z"/><path d="M16.6 9.3a4 4 0 0 1 0 5.4"/><path d="M19.3 6.8a8 8 0 0 1 0 10.4"/>',
+  copy: '<rect x="8" y="8" width="12" height="12" rx="2.2"/><path d="M5 15H4.6A1.6 1.6 0 0 1 3 13.4V4.6A1.6 1.6 0 0 1 4.6 3h8.8A1.6 1.6 0 0 1 15 4.6V6"/>',
+  listBullet: '<circle cx="4.6" cy="6" r="1.3" fill="currentColor" stroke="none"/><circle cx="4.6" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="4.6" cy="18" r="1.3" fill="currentColor" stroke="none"/><line x1="9.2" y1="6" x2="20.5" y2="6"/><line x1="9.2" y1="12" x2="20.5" y2="12"/><line x1="9.2" y1="18" x2="20.5" y2="18"/>',
+  listNumber: '<line x1="9.2" y1="6" x2="20.5" y2="6"/><line x1="9.2" y1="12" x2="20.5" y2="12"/><line x1="9.2" y1="18" x2="20.5" y2="18"/><text x="1.6" y="8.4" font-size="7.4" fill="currentColor" stroke="none" font-weight="800" font-family="sans-serif">1</text><text x="1.6" y="14.4" font-size="7.4" fill="currentColor" stroke="none" font-weight="800" font-family="sans-serif">2</text><text x="1.6" y="20.4" font-size="7.4" fill="currentColor" stroke="none" font-weight="800" font-family="sans-serif">3</text>',
+  chevronUp: '<polyline points="5,15 12,8 19,15"/>',
+  category: '<path d="M11 3.3 3.3 11a2 2 0 0 0 0 2.8l6.9 6.9a2 2 0 0 0 2.8 0l7.7-7.7a2 2 0 0 0 .6-1.4V5.3a2 2 0 0 0-2-2h-6.1a2 2 0 0 0-1.2.4Z"/><circle cx="8.6" cy="8.6" r="1.35" fill="currentColor" stroke="none"/>',
+  dotsGrid: '<circle cx="7" cy="7" r="1.3"/><circle cx="12" cy="7" r="1.3"/><circle cx="17" cy="7" r="1.3"/><circle cx="7" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="17" cy="12" r="1.3"/><circle cx="7" cy="17" r="1.3"/><circle cx="12" cy="17" r="1.3"/><circle cx="17" cy="17" r="1.3"/>',
+  sparkle: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8Z"/><path d="M19 17l.8 2.2L22 20l-2.2.8L19 23l-.8-2.2L16 20l2.2-.8Z"/>',
+  bold: '<path d="M7 5h6.5a3.5 3.5 0 0 1 0 7H7Z"/><path d="M7 12h7a3.7 3.7 0 0 1 0 7.4H7Z"/>',
+  italic: '<line x1="13" y1="4" x2="9" y2="20"/><line x1="15" y1="4" x2="19" y2="4"/><line x1="5" y1="20" x2="9" y2="20"/>',
+  underline: '<path d="M6 4v7a6 6 0 0 0 12 0V4"/><line x1="5" y1="20.5" x2="19" y2="20.5"/>',
+  strike: '<path d="M6.5 8c0-2.5 2.2-4 5.5-4s5.5 1.4 5.5 3.6"/><path d="M8 20c1 .5 2.5.8 4 .8 3.3 0 5.5-1.5 5.5-4"/><line x1="3.5" y1="12" x2="20.5" y2="12"/>',
+  hash: '<line x1="9" y1="3" x2="7" y2="21"/><line x1="17" y1="3" x2="15" y2="21"/><line x1="4" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="20" y2="15"/>',
 };
 export function icon(name, size = 20, extra = '') {
   const body = ICONS[name] || ICONS.file;
@@ -113,7 +141,7 @@ export function showToast(message, opts = {}) {
 }
 
 /* ---------------- Bottom sheet ---------------- */
-export function openSheet(innerHTML, { title = '' } = {}) {
+export function openSheet(innerHTML, { title = '', onClose } = {}) {
   const backdrop = document.createElement('div');
   backdrop.className = 'sheet-backdrop';
   backdrop.innerHTML = `<div class="sheet">
@@ -123,7 +151,14 @@ export function openSheet(innerHTML, { title = '' } = {}) {
   </div>`;
   document.body.appendChild(backdrop);
   requestAnimationFrame(() => backdrop.classList.add('show'));
-  const close = () => { backdrop.classList.remove('show'); setTimeout(() => backdrop.remove(), 320); };
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    backdrop.classList.remove('show');
+    setTimeout(() => backdrop.remove(), 320);
+    onClose?.();
+  };
   backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(); });
   return { el: backdrop, close };
 }
@@ -182,7 +217,7 @@ export function promptDialog(message, { title = 'Masukkan teks', placeholder = '
 }
 
 /** Small inline color/icon picker grid used by folder & tag editors. */
-export const FOLDER_COLORS = ['#5E5CE6', '#FF6FB5', '#FF9F0A', '#34C759', '#0A84FF', '#FF453A', '#AD6A2C', '#64748B'];
+export const FOLDER_COLORS = ['#5E5CE6', '#FF6FB5', '#FF9F0A', '#34C759', '#0A84FF', '#FF453A', '#AD6A2C', '#64748B', '#12B4D9', '#D6336C', '#7C3AED', '#2FAE5C'];
 export const FOLDER_EMOJI = ['📁', '🎒', '🧪', '🌏', '➗', '📚', '📖', '🎵', '🖼️', '🎮', '💡', '📌', '🗂️', '🧠', '🏆', '💼'];
 
 /* ==========================================================================
@@ -316,4 +351,165 @@ export function updateThemeColorMeta(hex) {
     m = document.createElement('meta'); m.name = 'theme-color'; document.head.appendChild(m);
   }
   m.content = hex;
+}
+
+/* ==========================================================================
+   Haptics — silent no-op on iOS Safari / desktop (feature-detected).
+   ========================================================================== */
+export function hapticTap(ms = 10) {
+  try { if (navigator.vibrate) navigator.vibrate(ms); } catch {}
+}
+
+/* ==========================================================================
+   Generic pointer-based drag-to-reorder for a vertical list of sibling
+   elements. Used by the checklist/bullet/number engine and the category
+   manager. No external dependency, touch + mouse via Pointer Events.
+   ========================================================================== */
+export function makeSortable(listEl, { handleSelector = null, itemSelector, onReorder, onDragStart, onDragEnd } = {}) {
+  let dragEl = null, startY = 0, startTop = 0, placeholder = null, listRect = null;
+
+  function itemsOf() { return $$(itemSelector, listEl); }
+
+  function onDown(e) {
+    const handle = handleSelector ? e.target.closest(handleSelector) : e.target;
+    if (!handle || !listEl.contains(handle)) return;
+    const item = e.target.closest(itemSelector);
+    if (!item) return;
+    e.preventDefault();
+    dragEl = item;
+    const r = item.getBoundingClientRect();
+    listRect = listEl.getBoundingClientRect();
+    startY = (e.touches ? e.touches[0].clientY : e.clientY);
+    startTop = r.top;
+    placeholder = document.createElement('div');
+    placeholder.className = 'sortable-placeholder';
+    placeholder.style.height = r.height + 'px';
+    item.after(placeholder);
+    item.classList.add('dragging');
+    item.style.position = 'fixed';
+    item.style.left = r.left + 'px';
+    item.style.top = r.top + 'px';
+    item.style.width = r.width + 'px';
+    item.style.zIndex = 999;
+    item.style.pointerEvents = 'none';
+    hapticTap(8);
+    onDragStart?.(item);
+    document.addEventListener('pointermove', onMove, { passive: false });
+    document.addEventListener('pointerup', onUp);
+    document.addEventListener('pointercancel', onUp);
+  }
+
+  function onMove(e) {
+    if (!dragEl) return;
+    e.preventDefault();
+    const y = e.clientY;
+    const dy = y - startY;
+    let newTop = startTop + dy;
+    newTop = Math.max(listRect.top - 20, Math.min(newTop, listRect.bottom - dragEl.offsetHeight + 20));
+    dragEl.style.top = newTop + 'px';
+    const midY = newTop + dragEl.offsetHeight / 2;
+    const siblings = itemsOf().filter(x => x !== dragEl);
+    let target = null;
+    for (const sib of siblings) {
+      const r = sib.getBoundingClientRect();
+      if (midY < r.top + r.height / 2) { target = sib; break; }
+    }
+    if (target) { if (target !== placeholder.nextSibling) target.before(placeholder); }
+    else if (siblings.length) { siblings[siblings.length - 1].after(placeholder); }
+    else { listEl.appendChild(placeholder); }
+  }
+
+  function onUp() {
+    if (!dragEl) return;
+    dragEl.classList.remove('dragging');
+    dragEl.style.position = '';
+    dragEl.style.left = ''; dragEl.style.top = ''; dragEl.style.width = ''; dragEl.style.zIndex = ''; dragEl.style.pointerEvents = '';
+    placeholder.replaceWith(dragEl);
+    placeholder = null;
+    document.removeEventListener('pointermove', onMove);
+    document.removeEventListener('pointerup', onUp);
+    document.removeEventListener('pointercancel', onUp);
+    hapticTap(6);
+    onDragEnd?.(dragEl);
+    onReorder?.(itemsOf());
+    dragEl = null;
+  }
+
+  listEl.addEventListener('pointerdown', onDown);
+  return { destroy: () => listEl.removeEventListener('pointerdown', onDown) };
+}
+
+/* ==========================================================================
+   Swipe-to-reveal actions on a row (iOS Mail / Gmail style). Expects markup:
+   <div class="swipe-row"><div class="swipe-actions-bg">...buttons...</div>
+   <div class="swipe-content">...tap target...</div></div>
+   ========================================================================== */
+let _activeSwipeCloser = null;
+let _swipeOutsideListenerBound = false;
+
+export function wireSwipeRows(container, onAction) {
+  let openRow = null;
+  const closeOpen = () => { if (openRow) { openRow.querySelector('.swipe-content').style.transform = ''; openRow.classList.remove('swiped'); openRow = null; } };
+
+  $$('.swipe-row', container).forEach(row => {
+    const content = $('.swipe-content', row);
+    const bg = $('.swipe-actions-bg', row);
+    if (!content || !bg) return;
+    const maxReveal = () => bg.offsetWidth || 168;
+    let sx = 0, sy = 0, dragging = null, baseX = 0;
+
+    content.addEventListener('pointerdown', (e) => {
+      sx = e.clientX; sy = e.clientY; dragging = null;
+      baseX = row.classList.contains('swiped') ? -maxReveal() : 0;
+    });
+    content.addEventListener('pointermove', (e) => {
+      const dx = e.clientX - sx, dy = e.clientY - sy;
+      if (dragging === null) {
+        if (Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy) * 1.4) dragging = true;
+        else if (Math.abs(dy) > 8) dragging = false;
+        else return;
+      }
+      if (!dragging) return;
+      e.preventDefault();
+      if (openRow && openRow !== row) closeOpen();
+      let x = baseX + (e.clientX - sx);
+      x = Math.max(-maxReveal() - 10, Math.min(0, x));
+      content.style.transform = `translateX(${x}px)`;
+      content.style.transition = 'none';
+    });
+    const settle = (e) => {
+      if (!dragging) { dragging = null; return; }
+      const dx = e.clientX - sx;
+      content.style.transition = '';
+      const finalX = baseX + dx;
+      if (finalX < -maxReveal() * 0.45) {
+        content.style.transform = `translateX(${-maxReveal()}px)`;
+        row.classList.add('swiped'); openRow = row; hapticTap(8);
+      } else {
+        content.style.transform = ''; row.classList.remove('swiped');
+        if (openRow === row) openRow = null;
+      }
+      dragging = null;
+    };
+    content.addEventListener('pointerup', settle);
+    content.addEventListener('pointercancel', settle);
+
+    $$('.swipe-act', bg).forEach(btn => btn.onclick = (e) => {
+      e.stopPropagation();
+      hapticTap(12);
+      onAction?.(row.dataset.noteId, btn.dataset.swipeAct, row);
+      closeOpen();
+    });
+  });
+
+  // Setiap render ulang, daftar sebagai "penutup swipe aktif" saat ini alih-alih
+  // menumpuk listener document baru (yang lama otomatis tergantikan di sini).
+  _activeSwipeCloser = { isOutside: (target) => openRow && !openRow.contains(target), close: closeOpen };
+
+  if (!_swipeOutsideListenerBound) {
+    _swipeOutsideListenerBound = true;
+    document.addEventListener('pointerdown', (e) => {
+      if (_activeSwipeCloser?.isOutside(e.target)) _activeSwipeCloser.close();
+    });
+  }
 }

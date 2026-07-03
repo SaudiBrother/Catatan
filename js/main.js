@@ -5,13 +5,14 @@
 
 import { initDB, getSetting, setSetting, isLocked, getLockConfig,
          verifyUnlock, unlockWithFingerprint, lockApp, createNote,
-         getAllReminders, markReminderNotified } from './db.js';
+         getAllReminders, markReminderNotified, ensureDefaultCategories, purgeOldTrash } from './db.js';
 import { $, $$, icon, escapeHtml, openSheet, showToast, updateThemeColorMeta, isStandaloneDisplay, initInstallPrompt } from './ui.js';
 import {
   renderDashboard, renderBrowse, renderSearch,
-  renderGraph, renderSettings, renderReader,
+  renderGraph, renderSettings, renderReader, renderArchive, renderTrash,
 } from './views.js';
 import { renderNoteView } from './editor.js';
+import { renderCategoryManager } from './categories.js';
 
 /* ── constants ── */
 const THEME_BG_MAP = {
@@ -39,11 +40,20 @@ function parseRoute(hash) {
   return { route: route || 'home', params };
 }
 
+function runRender(routeObj) {
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (document.startViewTransition && !reduceMotion) {
+    const t = document.startViewTransition(() => render(routeObj));
+    return t.updateCallbackDone.catch(() => render(routeObj));
+  }
+  return render(routeObj);
+}
+
 async function navigate(hash) {
   if (isLocked()) return;
   const prev = window.location.hash;
   if (hash !== prev) window.history.pushState(null, '', hash);
-  await render(parseRoute(hash));
+  await runRender(parseRoute(hash));
   window.scrollTo(0, 0);
 }
 function back() { window.history.back(); }
@@ -60,8 +70,9 @@ async function render({ route, params }) {
   const tabMap = { home: 'tabHome', browse: 'tabBrowse', search: 'tabSearch', graph: 'tabGraph', settings: 'tabSettings' };
   const activeTab = document.getElementById(tabMap[route]);
   if (activeTab) activeTab.classList.add('active');
-  // Nested note routes still highlight browse
-  if (route === 'note') document.getElementById('tabBrowse')?.classList.add('active');
+  // Nested note/category routes still highlight browse; archive/trash highlight settings
+  if (route === 'note' || route === 'categories') document.getElementById('tabBrowse')?.classList.add('active');
+  if (route === 'archive' || route === 'trash') document.getElementById('tabSettings')?.classList.add('active');
 
   const ctx = { navigate, back, rerender: () => render({ route, params }) };
 
@@ -74,13 +85,20 @@ async function render({ route, params }) {
     case 'search':
       await renderSearch(viewEl, params, ctx); break;
     case 'graph':
-      await renderGraph(viewEl, params, ctx); break;
+      _cleanupFn = await renderGraph(viewEl, params, ctx) || null; break;
     case 'settings':
       await renderSettings(viewEl, params, ctx); break;
+    case 'categories':
+      await renderCategoryManager(viewEl, params, ctx); break;
+    case 'archive':
+      await renderArchive(viewEl, params, ctx); break;
+    case 'trash':
+      await renderTrash(viewEl, params, ctx); break;
     case 'note':
       if (params.id === 'new') {
         const freshNote = await createNote({ title: '', content: '' });
-        await navigate('#/note/' + freshNote.id);
+        window.history.replaceState(null, '', '#/note/' + freshNote.id);
+        await render({ route: 'note', params: { id: freshNote.id } });
         return;
       }
       if (params.reader) {
@@ -100,7 +118,7 @@ async function render({ route, params }) {
 /* ── App Shell HTML (injected into body before first render) ── */
 function buildShell() {
   document.body.innerHTML = `
-  <div id="app" data-theme="">
+  <div id="app">
     <div id="mainView" style="flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden"></div>
     <nav class="tabbar" role="tablist" aria-label="Navigasi utama">
       <button class="tab-btn" id="tabHome" role="tab" aria-label="Beranda" data-nav="#/">
@@ -197,7 +215,8 @@ async function tickReminders() {
   for (const r of reminders) {
     if (r.notified) continue;
     if (new Date(r.datetime).getTime() <= now) {
-      new Notification(r.title || 'Pengingat Catat', { body: 'Saatnya: ' + r.title, icon: 'icons/icon-192.png', tag: r.id });
+      const n = new Notification(r.title || 'Pengingat Catat', { body: 'Saatnya: ' + r.title, icon: 'icons/icon-192.png', tag: r.id });
+      n.onclick = () => { window.focus(); if (r.noteId) navigate('#/note/' + r.noteId); n.close(); };
       await markReminderNotified(r.id);
     }
   }
@@ -223,6 +242,8 @@ function removeSplash() {
 async function boot() {
   // 1. Ensure DB is ready
   await initDB();
+  await ensureDefaultCategories();
+  purgeOldTrash().catch(() => {});
 
   // 2. Build shell (empties body except splash)
   buildShell();
@@ -230,7 +251,6 @@ async function boot() {
   // 3. Apply saved theme
   const theme = await getSetting('theme', 'dark');
   document.documentElement.setAttribute('data-theme', theme);
-  document.getElementById('app').setAttribute('data-theme', theme);
   updateThemeColorMeta(THEME_BG_MAP[theme] || '#131316');
 
   // 4. Init PWA install prompt listener early
@@ -248,7 +268,8 @@ async function boot() {
 
   // 7. Wire FAB
   document.getElementById('fabNew').onclick = async () => {
-    const note = await createNote({ title: '', content: '' });
+    const folderId = (_currentRoute?.route === 'browse' && _currentRoute.params.folderId) ? _currentRoute.params.folderId : null;
+    const note = await createNote({ title: '', content: '', folderId });
     navigate('#/note/' + note.id);
   };
 
@@ -258,7 +279,7 @@ async function boot() {
   // 9. Browser back/forward
   window.addEventListener('popstate', () => {
     const { route, params } = parseRoute(window.location.hash);
-    render({ route, params });
+    runRender({ route, params });
   });
 
   // 10. Remove splash
@@ -274,19 +295,16 @@ async function boot() {
 
   // 13. Periodic lock: if user sets lock and navigates away > 5 min, re-lock
   document.addEventListener('visibilitychange', async () => {
-    if (document.visibilityState === 'visible') return;
     const cfg = await getLockConfig();
-    if (cfg?.enabled) {
-      // mark hide time
-      sessionStorage.setItem('_catat_hide', String(Date.now()));
+    if (document.visibilityState !== 'visible') {
+      // Aplikasi baru disembunyikan: catat waktunya.
+      if (cfg?.enabled) sessionStorage.setItem('_catat_hide', String(Date.now()));
+      return;
     }
-  });
-  document.addEventListener('visibilitychange', async () => {
-    if (document.visibilityState !== 'visible') return;
+    // Aplikasi baru terlihat lagi: cek sudah berapa lama disembunyikan.
     const hideTs = sessionStorage.getItem('_catat_hide');
     if (!hideTs) return;
     const elapsed = Date.now() - Number(hideTs);
-    const cfg = await getLockConfig();
     if (cfg?.enabled && elapsed > 5 * 60 * 1000) {
       lockApp();
       renderLockScreen();

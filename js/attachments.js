@@ -91,8 +91,7 @@ async function openAttachmentViewer(id) {
     ${inner}
     <a class="btn btn-primary btn-block" download="${escapeHtml(att.name)}" href="${url}" target="_blank">
       ${icon('download', 16)} Unduh File
-    </a>`, { title: att.name });
-  el.addEventListener('remove', () => URL.revokeObjectURL(url));
+    </a>`, { title: att.name, onClose: () => URL.revokeObjectURL(url) });
 }
 
 /* --------------------------------------------------------------------------
@@ -104,6 +103,16 @@ export function openVoiceRecorder(noteId, onSave) {
   let startTime = 0;
   let timerInterval = null;
   let stream = null;
+
+  // Dipakai baik oleh tombol "Berhenti" maupun onClose sheet, supaya mikrofon
+  // & interval TIDAK PERNAH terus berjalan di background jika pengguna menutup
+  // sheet dengan mengetuk di luar (bukan menekan tombol Berhenti secara eksplisit).
+  const stopRecording = () => {
+    mediaRecorder?.stop();
+    stream?.getTracks().forEach(t => t.stop());
+    clearInterval(timerInterval);
+    timerInterval = null; stream = null; mediaRecorder = null;
+  };
 
   const { el, close } = openSheet(`
     <div style="text-align:center;padding:16px 0">
@@ -117,7 +126,7 @@ export function openVoiceRecorder(noteId, onSave) {
         <button class="btn btn-primary btn-block" id="recSaveBtn">${icon('check', 16)} Simpan Rekaman</button>
       </div>
       <p class="muted" style="margin-top:12px;font-size:12px">Izinkan akses mikrofon ketika diminta browser</p>
-    </div>`, { title: 'Voice Note' });
+    </div>`, { title: 'Voice Note', onClose: stopRecording });
 
   const timeEl = $('#recTime', el);
   const statusEl = $('#recStatus', el);
@@ -163,9 +172,7 @@ export function openVoiceRecorder(noteId, onSave) {
   };
 
   stopBtn.onclick = () => {
-    mediaRecorder?.stop();
-    stream?.getTracks().forEach(t => t.stop());
-    clearInterval(timerInterval);
+    stopRecording();
     stopBtn.disabled = true;
   };
 
@@ -213,7 +220,7 @@ function openCropUI(file, noteId, onSave) {
     <div style="display:flex;gap:8px">
       <button class="btn btn-soft" style="flex:1" id="scanRetake">📷 Ulangi</button>
       <button class="btn btn-primary" style="flex:1" id="scanSave">Simpan Scan</button>
-    </div>`, { title: 'Scan Dokumen' });
+    </div>`, { title: 'Scan Dokumen', onClose: () => URL.revokeObjectURL(url) });
 
   const img = $('#cropImg', el);
   const stage = $('#cropStage', el);
@@ -229,7 +236,7 @@ function openCropUI(file, noteId, onSave) {
     $$('[data-filter]', el).forEach(x => x.classList.remove('active'));
     b.classList.add('active');
   });
-  $('#scanRetake', el).onclick = () => { close(); URL.revokeObjectURL(url); openScanFlow(noteId, onSave); };
+  $('#scanRetake', el).onclick = () => { close(); openScanFlow(noteId, onSave); };
   $('#scanSave', el).onclick = async () => {
     showToast('Memproses...', { icon: 'scan' });
     const blob = await cropAndFilter(img, handles, stage, filter);
@@ -237,7 +244,6 @@ function openCropUI(file, noteId, onSave) {
     blob.lastModified = Date.now();
     const att = await addAttachment(noteId, blob, 'image');
     close();
-    URL.revokeObjectURL(url);
     showToast('Scan disimpan', { icon: 'camera' });
     onSave?.(att);
   };
@@ -421,4 +427,39 @@ export function openDrawCanvas(noteId, onSave) {
       onSave?.(att);
     }, 'image/png');
   };
+}
+
+/* --------------------------------------------------------------------------
+   Unified "Lampirkan" chooser — one paperclip button, every attachment kind.
+   -------------------------------------------------------------------------- */
+export function openAttachMenu(noteId, { onInlineImage, onRefresh } = {}) {
+  const html = `
+    <div class="fp-header"><span class="fp-header-title">Lampirkan</span></div>
+    <div class="share-options">
+      <button class="share-opt" data-kind="voice">
+        <span class="share-opt-ic" style="background:#FF453A22;color:#FF453A">${icon('mic', 20)}</span>
+        <span class="share-opt-text"><b>Rekam Suara</b><small>Simpan catatan suara di sini</small></span>
+      </button>
+      <button class="share-opt" data-kind="image">
+        <span class="share-opt-ic" style="background:#FF9F0A22;color:#FF9F0A">${icon('image', 20)}</span>
+        <span class="share-opt-text"><b>Gambar</b><small>Pilih dari galeri, disisipkan langsung</small></span>
+      </button>
+      <button class="share-opt" data-kind="scan">
+        <span class="share-opt-ic" style="background:#0A84FF22;color:#0A84FF">${icon('camera', 20)}</span>
+        <span class="share-opt-text"><b>Pindai Dokumen</b><small>Kamera + potong otomatis</small></span>
+      </button>
+      <button class="share-opt" data-kind="file">
+        <span class="share-opt-ic" style="background:#64748B22;color:#64748B">${icon('attach', 20)}</span>
+        <span class="share-opt-text"><b>File Lain</b><small>PDF, dokumen, atau berkas apa pun</small></span>
+      </button>
+    </div>`;
+  const { el, close } = openSheet(html);
+  $$('.share-opt', el).forEach((btn) => btn.onclick = () => {
+    const kind = btn.dataset.kind;
+    close();
+    if (kind === 'voice') openVoiceRecorder(noteId, () => onRefresh?.());
+    else if (kind === 'scan') openScanFlow(noteId, () => onRefresh?.());
+    else if (kind === 'image') pickFiles(noteId, { accept: 'image/*' }).then((atts) => { atts.forEach((a) => onInlineImage?.(a)); onRefresh?.(); });
+    else if (kind === 'file') pickFiles(noteId, {}).then(() => onRefresh?.());
+  });
 }

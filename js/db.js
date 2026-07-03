@@ -118,7 +118,8 @@ async function aesDecrypt(payload, key) {
    -------------------------------------------------------------------------- */
 
 export async function getLockConfig() {
-  return (await dbGet('settings', 'lock')) || null;
+  const row = await dbGet('settings', 'lock');
+  return row ? row.value : null;
 }
 export function isLocked() { return _locked; }
 export function getMasterKey() { return _masterKey; }
@@ -248,13 +249,38 @@ async function maybeDecryptNote(n) {
 }
 async function maybeEncryptForSave(n) {
   const cfg = await getLockConfig();
-  if (!cfg || !cfg.enabled || !_masterKey) return { ...n, encrypted: false };
+  // Encrypt when the whole app is locked, OR when this specific note opted
+  // into an individual lock ("Kunci" in the note's overflow menu) — both
+  // share the same master key/PIN infrastructure.
+  const shouldEncrypt = !!(cfg && _masterKey && (cfg.enabled || n.locked));
+  if (!shouldEncrypt) return { ...n, encrypted: false };
   return {
     ...n,
     title: await aesEncrypt(n.title || '', _masterKey),
     content: await aesEncrypt(n.content || '', _masterKey),
     encrypted: true,
   };
+}
+
+/** Set up the PIN/key infrastructure WITHOUT enabling whole-app lock and
+ *  WITHOUT touching other notes — used the first time a user locks a single
+ *  note or a single category rather than the whole app. If a config already
+ *  exists, this just verifies the passphrase and hydrates the session key. */
+export async function ensureLockConfig(passphrase, mode = 'pin') {
+  const existing = await getLockConfig();
+  if (existing) {
+    const key = await deriveKeyFromPassphrase(passphrase, existing.salt);
+    await aesDecrypt(existing.verify, key); // throws if the PIN is wrong
+    _masterKey = key; _locked = false;
+    return existing;
+  }
+  const salt = bufToB64(randBytes(16));
+  const key = await deriveKeyFromPassphrase(passphrase, salt);
+  const verify = await aesEncrypt('catat-verify-ok', key);
+  const cfg = { mode, salt, verify, enabled: false, fingerprint: false };
+  await dbPut('settings', { key: 'lock', value: cfg });
+  _masterKey = key; _locked = false;
+  return cfg;
 }
 
 /* --------------------------------------------------------------------------
@@ -269,6 +295,10 @@ export async function createNote(partial = {}) {
     folderId: partial.folderId || null,
     tags: partial.tags || [],
     favorite: false,
+    pinned: false,
+    archived: false,
+    deletedAt: null,
+    locked: false,
     color: partial.color || null,
     createdAt: nowISO(),
     updatedAt: nowISO(),
@@ -300,16 +330,36 @@ export async function getAllNotes() {
   const raw = await dbAll('notes');
   return Promise.all(raw.map(maybeDecryptNote));
 }
-export async function getNotesByFolder(folderId) {
+/** The "normal" working set: not archived, not in trash. Used by Dashboard,
+ *  Browse and anywhere else that should behave like archived/trashed notes
+ *  don't exist. */
+export async function getActiveNotes() {
   const all = await getAllNotes();
+  return all.filter(n => !n.deletedAt && !n.archived);
+}
+export async function getArchivedNotes() {
+  const all = await getAllNotes();
+  return all.filter(n => !n.deletedAt && n.archived).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+}
+export async function getTrashedNotes() {
+  const all = await getAllNotes();
+  return all.filter(n => n.deletedAt).sort((a, b) => new Date(b.deletedAt) - new Date(a.deletedAt));
+}
+/** Active + archived, i.e. everything except trash — what global search should cover. */
+export async function getSearchableNotes() {
+  const all = await getAllNotes();
+  return all.filter(n => !n.deletedAt);
+}
+export async function getNotesByFolder(folderId) {
+  const all = await getActiveNotes();
   return all.filter(n => n.folderId === folderId);
 }
 export async function getFavoriteNotes() {
-  const all = await getAllNotes();
+  const all = await getActiveNotes();
   return all.filter(n => n.favorite).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
 }
 export async function getRecentNotes(n = 5) {
-  const all = await getAllNotes();
+  const all = await getActiveNotes();
   return all.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)).slice(0, n);
 }
 export async function toggleFavorite(id) {
@@ -317,12 +367,83 @@ export async function toggleFavorite(id) {
   if (!n) return null;
   return updateNote(id, { favorite: !n.favorite }, n.favorite ? 'Dihapus dari favorit' : 'Ditambah ke favorit');
 }
+export async function togglePin(id) {
+  const n = await getNote(id);
+  if (!n) return null;
+  return updateNote(id, { pinned: !n.pinned }, n.pinned ? 'Lepas sematan' : 'Disematkan');
+}
+export async function toggleArchive(id) {
+  const n = await getNote(id);
+  if (!n) return null;
+  return updateNote(id, { archived: !n.archived, pinned: false }, n.archived ? 'Dikeluarkan dari arsip' : 'Diarsipkan');
+}
+/** Soft delete — moves the note to Sampah (Trash). This is what every
+ *  "Hapus" action in the UI should call; nothing is destroyed yet. */
 export async function deleteNote(id) {
+  return updateNote(id, { deletedAt: nowISO(), pinned: false }, 'Dipindah ke Sampah');
+}
+export async function restoreNote(id) {
+  return updateNote(id, { deletedAt: null }, 'Dipulihkan dari Sampah');
+}
+/** Irreversible — only reachable from the Sampah (Trash) screen. */
+export async function permanentlyDeleteNote(id) {
   await dbDelete('notes', id);
   const atts = await dbAllByIndex('attachments', 'noteId', id);
   for (const a of atts) await dbDelete('attachments', a.id);
   const vers = await dbAllByIndex('versions', 'noteId', id);
   for (const v of vers) await dbDelete('versions', v.id);
+  const rems = await dbAllByIndex('reminders', 'noteId', id);
+  for (const r of rems) await dbDelete('reminders', r.id);
+  const tl = await dbAllByIndex('timeline', 'noteId', id);
+  for (const t of tl) await dbDelete('timeline', t.id);
+}
+/** Anything sitting in trash for more than `days` is purged automatically
+ *  (called once at boot). Returns the number of notes purged. */
+export async function purgeOldTrash(days = 30) {
+  const trashed = await getTrashedNotes();
+  const cutoff = Date.now() - days * 86400000;
+  let purged = 0;
+  for (const n of trashed) {
+    if (new Date(n.deletedAt).getTime() < cutoff) { await permanentlyDeleteNote(n.id); purged++; }
+  }
+  return purged;
+}
+export async function emptyTrash() {
+  const trashed = await getTrashedNotes();
+  for (const n of trashed) await permanentlyDeleteNote(n.id);
+  return trashed.length;
+}
+/** Full copy of a note including its attachments (fresh blobs + fresh ids,
+ *  so editing one copy's attachments never touches the other's). */
+export async function duplicateNote(id) {
+  const orig = await getNote(id);
+  if (!orig) return null;
+  const atts = await dbAllByIndex('attachments', 'noteId', id);
+  let newContent = orig.content || '';
+  const remap = atts.map(a => ({ oldId: a.id, newId: uid(), att: a }));
+  for (const { oldId, newId } of remap) {
+    newContent = newContent.split(`data-attachment-id="${oldId}"`).join(`data-attachment-id="${newId}"`);
+  }
+  const copy = await createNote({
+    title: (orig.title ? orig.title + ' (Salinan)' : 'Tanpa judul (Salinan)'),
+    content: newContent,
+    folderId: orig.folderId,
+    tags: [...(orig.tags || [])],
+    color: orig.color,
+  });
+  for (const { newId, att } of remap) {
+    await dbPut('attachments', { ...att, id: newId, noteId: copy.id });
+  }
+  return copy;
+}
+/** Toggle an individual note's lock. Requires an unlocked session key —
+ *  callers should run auth.ensureAuthenticated() first and catch the
+ *  'NEEDS_PIN' error to trigger a PIN prompt. */
+export async function toggleNoteLock(id, wantLocked) {
+  if (!_masterKey) { const e = new Error('Butuh PIN untuk mengubah kunci catatan'); e.code = 'NEEDS_PIN'; throw e; }
+  const current = await getNote(id);
+  if (!current || current._locked) { const e = new Error('Butuh PIN untuk mengubah kunci catatan'); e.code = 'NEEDS_PIN'; throw e; }
+  return updateNote(id, { locked: !!wantLocked }, wantLocked ? 'Catatan dikunci' : 'Kunci catatan dibuka');
 }
 export async function findNoteByTitle(title) {
   const all = await getAllNotes();
@@ -333,8 +454,9 @@ export async function findNoteByTitle(title) {
    Folders (unlimited nesting via parentId)
    -------------------------------------------------------------------------- */
 
-export async function createFolder({ name, parentId = null, color = '#5E5CE6', icon = '📁' }) {
-  const folder = { id: uid(), name, parentId, color, icon, order: Date.now() };
+export async function createFolder({ name, parentId = null, color = '#5E5CE6', icon = '📁', locked = false }) {
+  const all = await dbAll('folders');
+  const folder = { id: uid(), name, parentId, color, icon, locked, order: all.length ? Math.max(...all.map(f => f.order || 0)) + 1 : 0 };
   await dbPut('folders', folder);
   return folder;
 }
@@ -345,8 +467,32 @@ export async function updateFolder(id, patch) {
   await dbPut('folders', merged);
   return merged;
 }
-export async function getAllFolders() { return dbAll('folders'); }
+export async function getAllFolders() {
+  const all = await dbAll('folders');
+  return all.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+}
 export async function getFolder(id) { return dbGet('folders', id); }
+/** Persists a new drag-and-drop order for categories (Kelola Kategori). */
+export async function reorderFolders(idsInOrder) {
+  for (let i = 0; i < idsInOrder.length; i++) {
+    const f = await dbGet('folders', idsInOrder[i]);
+    if (f) { f.order = i; await dbPut('folders', f); }
+  }
+}
+export function isFolderLocked(folders, folderId) {
+  if (!folderId) return false;
+  const f = folders.find(x => x.id === folderId);
+  return !!(f && f.locked);
+}
+/** Seeds "Beranda" and "Pekerjaan" the very first time the app runs, so a
+ *  fresh install already has example categories the same way the reference
+ *  app does — never runs again once any category exists. */
+export async function ensureDefaultCategories() {
+  const existing = await dbAll('folders');
+  if (existing.length > 0) return;
+  await createFolder({ name: 'Beranda', color: '#5E5CE6', icon: '🏠' });
+  await createFolder({ name: 'Pekerjaan', color: '#0A84FF', icon: '💼' });
+}
 export async function deleteFolder(id, { reparentChildren = true } = {}) {
   const all = await getAllFolders();
   const children = all.filter(f => f.parentId === id);
@@ -354,8 +500,8 @@ export async function deleteFolder(id, { reparentChildren = true } = {}) {
     if (reparentChildren) await updateFolder(c.id, { parentId: null });
     else await deleteFolder(c.id, { reparentChildren });
   }
-  const notes = await getNotesByFolder(id);
-  for (const n of notes) await updateNote(n.id, { folderId: null }, 'Folder dihapus');
+  const notes = (await getAllNotes()).filter(n => n.folderId === id);
+  for (const n of notes) await updateNote(n.id, { folderId: null }, 'Kategori dihapus');
   await dbDelete('folders', id);
 }
 export function folderPath(folders, id) {
@@ -531,9 +677,26 @@ export function extractChecklist(html) {
   if (!html) return [];
   const div = document.createElement('div');
   div.innerHTML = html;
-  return [...div.querySelectorAll('.checklist-item')].map(el => ({
+  const legacy = [...div.querySelectorAll('.checklist-item')].map(el => ({
     text: el.querySelector('.ctext')?.textContent || '',
     done: el.dataset.checked === 'true',
+  }));
+  const current = [...div.querySelectorAll('.list-item[data-list-type="checklist"]')].map(el => ({
+    text: el.querySelector('.li-text')?.textContent || '',
+    done: el.dataset.checked === 'true',
+  }));
+  return [...legacy, ...current];
+}
+/** Every ordered/unordered/checklist line in the note, in document order —
+ *  used by the JPG/PDF/TXT exporter and the plain-text share fallback. */
+export function extractListBlocks(html) {
+  if (!html) return [];
+  const div = document.createElement('div');
+  div.innerHTML = html;
+  return [...div.querySelectorAll('.list-item')].map(el => ({
+    type: el.dataset.listType || 'bullet',
+    done: el.dataset.checked === 'true',
+    text: el.querySelector('.li-text')?.textContent || '',
   }));
 }
 export function extractWikiLinks(html) {
@@ -543,7 +706,7 @@ export function extractWikiLinks(html) {
 }
 
 export async function computeStats() {
-  const notes = await getAllNotes();
+  const notes = (await getAllNotes()).filter(n => !n.deletedAt);
   const allAtt = await dbAll('attachments');
   const folders = await getAllFolders();
   let totalWords = 0, totalChecklist = 0, doneChecklist = 0, totalLinks = 0;
@@ -578,7 +741,7 @@ export async function computeStats() {
    -------------------------------------------------------------------------- */
 
 export async function searchNotes(query, filters = {}) {
-  const all = await getAllNotes();
+  const all = await getSearchableNotes();
   const folders = await getAllFolders();
   let q = (query || '').trim().toLowerCase();
   let results = all;
@@ -598,6 +761,7 @@ export async function searchNotes(query, filters = {}) {
   if (filters.favoriteOnly) results = results.filter(n => n.favorite);
   if (filters.hasChecklist) results = results.filter(n => extractChecklist(n.content).length > 0);
   if (filters.color) results = results.filter(n => n.color === filters.color);
+  if (filters.archivedOnly) results = results.filter(n => n.archived);
   return results.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
 }
 

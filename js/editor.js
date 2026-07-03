@@ -1,17 +1,31 @@
 /* ==========================================================================
    CATAT — editor.js
-   The full-screen note editor: title, toolbar, contenteditable body,
-   attachments, voice notes, backlinks, autosave + version snapshots.
+   The full-screen note editor: two-row topbar (back/undo/redo/fav/share/
+   more + date/category), title, floating vertical toolbar, contenteditable
+   body with unified checklist/bullet/number lists, attachments, voice notes,
+   backlinks, autosave + granular undo/redo + periodic version snapshots.
    ========================================================================== */
 
 import {
-  getNote, updateNote, deleteNote, toggleFavorite, getAllFolders, folderPath,
-  getAttachmentsByNote, deleteAttachment, getAttachment, getVersions, restoreVersion,
-  saveVersion, getAllNotes, findNoteByTitle, createNote, addReminder, countWords,
-  extractChecklist,
+  getNote, updateNote, deleteNote, toggleFavorite, togglePin, toggleArchive,
+  toggleNoteLock, duplicateNote, getAllFolders, folderPath, isFolderLocked,
+  getMasterKey, getAttachmentsByNote, deleteAttachment, getAttachment,
+  getVersions, restoreVersion, saveVersion, getAllNotes, findNoteByTitle,
+  createNote, addReminder, countWords, extractChecklist,
 } from './db.js';
-import { $, $$, icon, escapeHtml, debounce, fmtRelative, fmtBytes, openSheet, sheetMenu, promptDialog, confirmDialog, showToast, FOLDER_COLORS } from './ui.js';
-import { pickFiles, openVoiceRecorder, openScanFlow, openDrawCanvas, attachmentPreviewHTML } from './attachments.js';
+import {
+  $, $$, icon, escapeHtml, debounce, fmtRelative, fmtDateLong,
+  openSheet, promptDialog, confirmDialog, showToast, hapticTap,
+  FOLDER_COLORS,
+} from './ui.js';
+import { pickFiles, openVoiceRecorder, openScanFlow, openDrawCanvas, openAttachMenu, attachmentPreviewHTML } from './attachments.js';
+import { createHistory } from './history.js';
+import { migrateLegacyChecklist, toggleListType, renumberLists, refreshAddItemAffordance, wireListEvents } from './richlist.js';
+import { openFontPanel } from './fontpanel.js';
+import { createVerticalToolbar } from './vtoolbar.js';
+import { openShareSheet, openQuickLink, openReadAloudSheet, stopSpeaking, parseBlocks } from './share.js';
+import { openCategoryPicker, guardCategoryAccess } from './categories.js';
+import { ensureAuthenticated } from './auth.js';
 
 let _objectUrls = [];
 let _savedRange = null;
@@ -183,6 +197,17 @@ export async function hydrateAttachments(container) {
 }
 function revokeObjectUrls() { _objectUrls.forEach(u => URL.revokeObjectURL(u)); _objectUrls = []; }
 
+/** What actually gets persisted to IndexedDB: a clone with runtime-only bits
+ *  stripped out — blob: src attributes (session-specific, would 404 after a
+ *  reload) and any leftover find-in-note highlight marks. */
+function getCleanContentHTML(contentEl) {
+  const clone = contentEl.cloneNode(true);
+  $$('[data-attachment-id]', clone).forEach((el) => { if (el.hasAttribute('src')) el.removeAttribute('src'); });
+  $$('.find-hit', clone).forEach((span) => { span.replaceWith(document.createTextNode(span.textContent)); });
+  $$('.li-add-btn', clone).forEach((btn) => btn.remove());
+  return clone.innerHTML;
+}
+
 /* ---------------- Table helpers ---------------- */
 function closestTable(contentEl) {
   const sel = window.getSelection();
@@ -206,41 +231,36 @@ function addTableCol(table) {
   }
 }
 
-/* ---------------- Toolbar markup ---------------- */
-function toolbarHTML() {
-  const btn = (cmd, ic, label) => `<button class="et-btn" data-cmd="${cmd}" title="${label}" aria-label="${label}">${ic}</button>`;
-  return `
-    <button class="et-btn" data-cmd="bold" title="Tebal"><b>B</b></button>
-    <button class="et-btn" data-cmd="italic" title="Miring"><i>I</i></button>
-    <button class="et-btn" data-cmd="underline" title="Garis bawah"><u>U</u></button>
-    ${btn('highlight', icon('highlight', 18), 'Sorot')}
-    <div class="et-sep"></div>
-    ${btn('checklist', icon('checklist', 18), 'Checklist')}
-    ${btn('table', icon('table', 18), 'Tabel')}
-    ${btn('quote', icon('quote', 18), 'Kutipan')}
-    ${btn('code', icon('code', 18), 'Kode')}
-    <div class="et-sep"></div>
-    ${btn('emoji', icon('emoji', 18), 'Emoji')}
-    ${btn('math', icon('sigma', 18), 'Rumus')}
-    ${btn('diagram', icon('diagram', 18), 'Diagram')}
-    <div class="et-sep"></div>
-    ${btn('link', icon('link', 18), 'Tautan')}
-    ${btn('image', icon('image', 18), 'Gambar')}
-    ${btn('attach', icon('attach', 18), 'Lampiran')}
-    ${btn('voice', icon('mic', 18), 'Rekam suara')}
-    ${btn('scan', icon('scan', 18), 'Scan dokumen')}
-    ${btn('draw', icon('draw', 18), 'Coret-coret')}
-    <div class="et-sep"></div>
-    ${btn('addrow', '+▭', 'Tambah baris')}
-    ${btn('addcol', '▯+', 'Tambah kolom')}
-  `;
-}
+/* ---------------- Vertical toolbar config ---------------- */
+const VTB_PRIMARY = [
+  { id: 'font', icon: 'type', label: 'Font' },
+  { id: 'checklist', icon: 'checklist', label: 'Checklist' },
+  { id: 'voice', icon: 'mic', label: 'Rekam suara' },
+  { id: 'draw', icon: 'draw', label: 'Coret-coret' },
+  { id: 'image', icon: 'image', label: 'Gambar' },
+  { id: 'emoji', icon: 'emoji', label: 'Emoji' },
+  { id: 'highlight', icon: 'highlight', label: 'Sorot' },
+  { id: 'bulletlist', icon: 'listBullet', label: 'Bullet' },
+  { id: 'numberlist', icon: 'listNumber', label: 'Nomor' },
+  { id: 'attach', icon: 'attach', label: 'Lampirkan' },
+];
+const VTB_SECONDARY = [
+  { id: 'table', icon: 'table', label: 'Tabel' },
+  { id: 'quote', icon: 'quote', label: 'Kutipan' },
+  { id: 'code', icon: 'code', label: 'Kode' },
+  { id: 'math', icon: 'sigma', label: 'Rumus' },
+  { id: 'diagram', icon: 'diagram', label: 'Diagram' },
+  { id: 'link', icon: 'link', label: 'Tautan' },
+  { id: 'scan', icon: 'scan', label: 'Pindai dokumen' },
+  { id: 'addrow', icon: 'table', label: 'Tambah baris' },
+  { id: 'addcol', icon: 'table', label: 'Tambah kolom' },
+];
 
 const EMOJI_SETS = {
-  'Sering': ['😀','😂','🥰','😎','🤔','👍','🙏','🔥','✨','🎉','❤️','✅'],
-  'Belajar': ['📚','✏️','🧪','🔬','➗','🧠','💡','📐','🧮','🎓','📝','🗂️'],
-  'Game & Hobi': ['🎮','🕹️','👾','🎲','🎨','🎵','🎬','📷','🏀','⚽','🚴','🏆'],
-  'Objek': ['📌','📎','🔗','💾','🔒','⏰','📅','🗓️','📦','💬','⭐','🚀'],
+  'Sering': ['😀', '😂', '🥰', '😎', '🤔', '👍', '🙏', '🔥', '✨', '🎉', '❤️', '✅'],
+  'Belajar': ['📚', '✏️', '🧪', '🔬', '➗', '🧠', '💡', '📐', '🧮', '🎓', '📝', '🗂️'],
+  'Game & Hobi': ['🎮', '🕹️', '👾', '🎲', '🎨', '🎵', '🎬', '📷', '🏀', '⚽', '🚴', '🏆'],
+  'Objek': ['📌', '📎', '🔗', '💾', '🔒', '⏰', '📅', '🗓️', '📦', '💬', '⭐', '🚀'],
 };
 
 /* ---------------- Backlinks ---------------- */
@@ -261,7 +281,7 @@ async function openVersionHistory(noteId, ctx) {
         </div>
         <button class="btn btn-sm btn-soft" data-restore="${v.id}">Pulihkan</button>
       </div>`).join('')
-    : `<div class="empty-state"><div class="e-icon">♻️</div><div class="e-title">Belum ada versi tersimpan</div><p>Snapshot otomatis dibuat setiap kamu selesai mengedit catatan ini.</p></div>`;
+    : `<div class="empty-state"><div class="e-icon">♻️</div><div class="e-title">Belum ada versi tersimpan</div><p>Snapshot otomatis dibuat secara berkala selagi kamu mengedit catatan ini.</p></div>`;
   const { el, close } = openSheet(`<div class="row-list">${html}</div>`, { title: 'Riwayat Versi' });
   $$('[data-restore]', el).forEach(b => b.onclick = async (e) => {
     e.stopPropagation();
@@ -274,189 +294,110 @@ async function openVersionHistory(noteId, ctx) {
   });
 }
 
-/* ---------------- Main view ---------------- */
-export async function renderNoteView(container, { id }, ctx) {
-  revokeObjectUrls();
-  let note = await getNote(id);
-  if (!note) { container.innerHTML = `<div class="empty-state"><div class="e-icon">🗒️</div><div class="e-title">Catatan tidak ditemukan</div></div>`; return; }
-
-  const folders = await getAllFolders();
-  const backlinks = await computeBacklinks(note.title || '', note.id);
+/* ---------------- Note detail sheet ---------------- */
+async function openNoteDetailSheet(note, contentEl, folders) {
+  const html = contentEl.innerHTML;
+  const words = countWords(html);
+  const chars = (contentEl.textContent || '').length;
+  const readMins = Math.max(1, Math.round(words / 200));
+  const checklist = extractChecklist(html);
   const attachments = await getAttachmentsByNote(note.id);
-  const voiceNotes = attachments.filter(a => (a.mime || a.type || '').startsWith('audio/'));
-  const fileAttachments = attachments.filter(a => !(a.mime || a.type || '').startsWith('audio/'));
+  const rows = [
+    ['Kategori', escapeHtml(folderPath(folders, note.folderId) || 'Tanpa Kategori')],
+    ['Dibuat', escapeHtml(fmtDateLong(note.createdAt))],
+    ['Diperbarui', escapeHtml(fmtRelative(note.updatedAt))],
+    ['Jumlah kata', String(words)],
+    ['Jumlah karakter', String(chars)],
+    ['Estimasi baca', `${readMins} menit`],
+  ];
+  if (checklist.length) rows.push(['Checklist', `${checklist.filter(c => c.done).length}/${checklist.length} selesai`]);
+  if (attachments.length) rows.push(['Lampiran', `${attachments.length} berkas`]);
+  rows.push(['Status kunci', note.locked ? '🔒 Dikunci' : 'Tidak dikunci']);
+  const html2 = `
+    <div class="fp-header"><span class="fp-header-title">Detail Catatan</span></div>
+    <div class="detail-grid">
+      ${rows.map(([k, v]) => `<div class="detail-row"><span>${k}</span><b>${v}</b></div>`).join('')}
+    </div>`;
+  openSheet(html2);
+}
 
-  container.innerHTML = `
-    <div class="topbar">
-      <button class="icon-btn plain" id="btnBack">${icon('chevronLeft', 22)}</button>
-      <span class="tb-title">${escapeHtml(folderPath(folders, note.folderId) || 'Tanpa folder')}</span>
-      <button class="icon-btn plain" id="btnFav">${icon('star', 20)}</button>
-      <button class="icon-btn plain" id="btnMore">${icon('settings', 20)}</button>
-    </div>
-    <main id="noteScroll" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;">
-      <div class="view-pad view-enter">
-        <input class="note-title-input" id="titleInput" placeholder="Judul catatan" value="${escapeHtml(note.title)}">
-        <div class="chip-row" style="margin-bottom:14px">
-          <button class="tag" id="folderChip">${icon('browse',12)} ${escapeHtml(folderPath(folders, note.folderId) || 'Pilih folder')}</button>
-          ${(note.tags || []).map(t => `<span class="tag">#${escapeHtml(t)}</span>`).join('')}
-          <button class="tag" id="tagChip">+ Tag</button>
-          <span class="swatch" id="colorChip" style="background:${note.color || 'var(--accent)'}"></span>
-        </div>
-        <div id="richContent" class="rich-content" contenteditable="true" data-placeholder="Tulis sesuatu... gunakan [[Judul]] untuk wiki-link">${note.content || ''}</div>
-
-        <div id="attachSection" style="margin-top:20px">
-          ${fileAttachments.length ? `<div class="section-title" style="margin-top:0">Lampiran</div><div class="attach-grid" id="attachGrid">${fileAttachments.map(attachmentPreviewHTML).join('')}</div>` : ''}
-          ${voiceNotes.length ? `<div class="section-title">Voice Note</div><div class="row-list" id="voiceList">${voiceNotes.map((v, i) => voiceRowHTML(v, i)).join('')}</div>` : ''}
-        </div>
-
-        ${backlinks.length ? `
-        <div class="section-title">Dipakai oleh</div>
-        <div class="row-list">${backlinks.map(n => `<button class="note-row" data-open="${n.id}"><span class="dot" style="background:${n.color || 'var(--accent)'}"></span><div class="body"><div class="title-line">${escapeHtml(n.title || 'Tanpa judul')}</div><div class="meta">${fmtRelative(n.updatedAt)}</div></div></button>`).join('')}</div>
-        ` : ''}
-        <div style="height:24px"></div>
-      </div>
-    </main>
-    <div class="edit-toolbar">${toolbarHTML()}</div>
+/* ---------------- Find-in-note ---------------- */
+function openFindBar(container, contentEl) {
+  if ($('#findBar', container)) { $('#findInput', container).focus(); return; }
+  const bar = document.createElement('div');
+  bar.className = 'find-bar';
+  bar.id = 'findBar';
+  bar.innerHTML = `
+    ${icon('search', 15)}
+    <input type="text" id="findInput" placeholder="Cari dalam catatan…" autocomplete="off">
+    <span class="find-count" id="findCount"></span>
+    <button class="icon-btn plain" id="findPrev" aria-label="Sebelumnya">${icon('chevronUp', 16)}</button>
+    <button class="icon-btn plain" id="findNext" aria-label="Berikutnya">${icon('chevronDown', 16)}</button>
+    <button class="icon-btn plain" id="findClose" aria-label="Tutup">${icon('close', 16)}</button>
   `;
+  const main = $('main', container);
+  container.insertBefore(bar, main);
+  requestAnimationFrame(() => bar.classList.add('show'));
 
-  const titleInput = $('#titleInput', container);
-  const contentEl = $('#richContent', container);
-
-  linkifyAllWikiSyntax(contentEl);
-  await hydrateAttachments(contentEl);
-  renderMath(contentEl);
-  renderDiagrams(contentEl);
-  markBrokenLinks(contentEl);
-
-  const initialSnapshot = JSON.stringify({ t: note.title, c: note.content });
-
-  const commit = debounce(async () => {
-    const tags = note.tags || [];
-    note = await updateNote(note.id, {
-      title: titleInput.value || '',
-      content: contentEl.innerHTML,
-      tags, folderId: note.folderId, color: note.color,
-    });
-  }, 650);
-
-  titleInput.addEventListener('input', commit);
-  contentEl.addEventListener('input', (e) => {
-    if (e.inputType === 'insertText' && e.data === ']') convertWikiNearCaret(contentEl);
-    commit();
-  });
-
-  contentEl.addEventListener('click', (e) => {
-    const cbx = e.target.closest('.cbx');
-    if (cbx) {
-      const item = cbx.closest('.checklist-item');
-      item.dataset.checked = item.dataset.checked === 'true' ? 'false' : 'true';
-      commit();
-      return;
-    }
-    const wikiA = e.target.closest('.wiki-link');
-    if (wikiA) {
-      e.preventDefault();
-      openWikiTarget(wikiA.dataset.wiki, ctx);
-    }
-  });
-
-  $('#btnBack', container).onclick = () => ctx.back();
-  $('#btnFav', container).onclick = async () => { note = await toggleFavorite(note.id); $('#btnFav', container).style.color = note.favorite ? 'var(--warning)' : ''; showToast(note.favorite ? 'Ditambah ke favorit' : 'Dihapus dari favorit'); };
-  if (note.favorite) $('#btnFav', container).style.color = 'var(--warning)';
-
-  $('#folderChip', container).onclick = () => openFolderPicker(note, folders, ctx, container);
-  $('#tagChip', container).onclick = () => openTagEditor(note, ctx);
-  $('#colorChip', container).onclick = () => openColorPicker(note, ctx);
-
-  $('#btnMore', container).onclick = async () => {
-    const choice = await sheetMenu([
-      { value: 'history', icon: 'history', label: 'Riwayat Versi' },
-      { value: 'reminder', icon: 'bell', label: 'Pasang Pengingat' },
-      { value: 'reader', icon: 'reader', label: 'Mode Reader' },
-      { value: 'export', icon: 'download', label: 'Bagikan sebagai file teks' },
-      { value: 'delete', icon: 'trash', label: 'Hapus Catatan', danger: true },
-    ], { title: note.title || 'Catatan' });
-    if (choice === 'history') openVersionHistory(note.id, ctx);
-    if (choice === 'reminder') openReminderSheet(note);
-    if (choice === 'reader') ctx.navigate('#/note/' + note.id + '/reader');
-    if (choice === 'export') exportNoteAsText(note);
-    if (choice === 'delete') {
-      const ok = await confirmDialog('Catatan ini akan dihapus permanen.', { title: 'Hapus catatan?', okLabel: 'Hapus', danger: true });
-      if (ok) { await deleteNote(note.id); showToast('Catatan dihapus', { icon: 'trash' }); ctx.navigate('#/'); }
-    }
-  };
-
-  /* Toolbar wiring */
-  const toolbar = $('.edit-toolbar', container);
-  toolbar.addEventListener('pointerdown', (e) => { if (e.target.closest('.et-btn')) saveSelection(); });
-  toolbar.addEventListener('click', async (e) => {
-    const b = e.target.closest('.et-btn');
-    if (!b) return;
-    const cmd = b.dataset.cmd;
-    restoreSelection(contentEl);
-    if (['bold', 'italic', 'underline'].includes(cmd)) { document.execCommand(cmd); commit(); return; }
-    if (cmd === 'highlight') { if (!wrapSelection('mark')) showToast('Pilih teks dulu untuk disorot'); commit(); return; }
-    if (cmd === 'checklist') { document.execCommand('insertHTML', false, `<div class="checklist-item" data-checked="false"><span class="cbx" contenteditable="false"></span><span class="ctext">&#8203;</span></div>`); commit(); return; }
-    if (cmd === 'table') { document.execCommand('insertHTML', false, `<table><tr><th>\u00A0</th><th>\u00A0</th><th>\u00A0</th></tr><tr><td>\u00A0</td><td>\u00A0</td><td>\u00A0</td></tr><tr><td>\u00A0</td><td>\u00A0</td><td>\u00A0</td></tr></table><p><br></p>`); commit(); return; }
-    if (cmd === 'addrow') { addTableRow(closestTable(contentEl)); commit(); return; }
-    if (cmd === 'addcol') { addTableCol(closestTable(contentEl)); commit(); return; }
-    if (cmd === 'quote') { document.execCommand('formatBlock', false, 'blockquote'); commit(); return; }
-    if (cmd === 'code') { document.execCommand('insertHTML', false, `<pre><code>kode di sini</code></pre><p><br></p>`); commit(); return; }
-    if (cmd === 'emoji') return openEmojiSheet(contentEl, commit);
-    if (cmd === 'math') return openMathSheet(contentEl, commit);
-    if (cmd === 'diagram') return openDiagramSheet(contentEl, commit);
-    if (cmd === 'link') return openLinkSheet(contentEl, commit);
-    if (cmd === 'image') return pickFiles(note.id, { accept: 'image/*' }).then(atts => { atts.forEach(a => insertInlineImage(contentEl, a)); commit(); refreshAttachSection(container, note.id); });
-    if (cmd === 'attach') return pickFiles(note.id, {}).then(() => refreshAttachSection(container, note.id));
-    if (cmd === 'voice') return openVoiceRecorder(note.id, () => refreshAttachSection(container, note.id));
-    if (cmd === 'scan') return openScanFlow(note.id, () => refreshAttachSection(container, note.id));
-    if (cmd === 'draw') return openDrawCanvas(note.id, (att) => { insertInlineImage(contentEl, att); commit(); });
-  });
-
-  function insertInlineImage(contentEl, att) {
-    restoreSelection(contentEl);
-    document.execCommand('insertHTML', false, `<img data-attachment-id="${att.id}" alt="${escapeHtml(att.name)}"><p><br></p>`);
-    hydrateAttachments(contentEl);
+  let matches = [], idx = -1;
+  function clearHighlights() {
+    $$('.find-hit', contentEl).forEach((span) => { span.replaceWith(document.createTextNode(span.textContent)); });
+    contentEl.normalize();
   }
-
-  return () => { revokeObjectUrls(); };
-}
-
-function voiceRowHTML(att, i) {
-  return `<div class="voice-row" data-voice-id="${att.id}">
-    <button class="voice-play" data-play="${att.id}">${icon('play', 16)}</button>
-    <div class="voice-wave">${Array.from({ length: 24 }, () => `<span style="height:${6 + Math.random() * 18}px"></span>`).join('')}</div>
-    <span class="tertiary" style="font-size:11px">Rekaman ${i + 1}</span>
-    <button class="icon-btn plain" data-del-voice="${att.id}">${icon('trash', 15)}</button>
-  </div>`;
-}
-
-async function refreshAttachSection(container, noteId) {
-  const attachments = await getAttachmentsByNote(noteId);
-  const voiceNotes = attachments.filter(a => (a.mime || a.type || '').startsWith('audio/'));
-  const fileAttachments = attachments.filter(a => !(a.mime || a.type || '').startsWith('audio/'));
-  const section = $('#attachSection', container);
-  section.innerHTML = `
-    ${fileAttachments.length ? `<div class="section-title" style="margin-top:0">Lampiran</div><div class="attach-grid">${fileAttachments.map(attachmentPreviewHTML).join('')}</div>` : ''}
-    ${voiceNotes.length ? `<div class="section-title">Voice Note</div><div class="row-list">${voiceNotes.map((v, i) => voiceRowHTML(v, i)).join('')}</div>` : ''}
-  `;
-  wireVoiceRows(section);
-}
-function wireVoiceRows(scope) {
-  $$('[data-play]', scope).forEach(b => b.onclick = async () => {
-    const att = await getAttachment(b.dataset.play);
-    if (!att) return;
-    const url = URL.createObjectURL(att.blob);
-    _objectUrls.push(url);
-    const audio = new Audio(url);
-    audio.play();
-  });
-  $$('[data-del-voice]', scope).forEach(b => b.onclick = async () => {
-    const ok = await confirmDialog('Hapus rekaman ini?', { okLabel: 'Hapus', danger: true });
-    if (!ok) return;
-    await deleteAttachment(b.dataset.delVoice);
-    b.closest('.voice-row').remove();
-  });
+  function goTo(i) {
+    if (!matches.length) return;
+    if (idx >= 0 && matches[idx]) matches[idx].classList.remove('active');
+    idx = ((i % matches.length) + matches.length) % matches.length;
+    matches[idx].classList.add('active');
+    matches[idx].scrollIntoView({ block: 'center', behavior: 'smooth' });
+    $('#findCount', bar).textContent = `${idx + 1}/${matches.length}`;
+  }
+  function runSearch(q) {
+    clearHighlights();
+    matches = []; idx = -1;
+    const term = q.trim();
+    if (!term) { $('#findCount', bar).textContent = ''; return; }
+    const lowerQ = term.toLowerCase();
+    const walker = document.createTreeWalker(contentEl, NodeFilter.SHOW_TEXT, null);
+    const textNodes = [];
+    let n;
+    while ((n = walker.nextNode())) { if (!n.parentElement?.closest('.find-hit')) textNodes.push(n); }
+    textNodes.forEach((node) => {
+      const text = node.textContent;
+      const lower = text.toLowerCase();
+      const positions = [];
+      let start = 0, pos;
+      while ((pos = lower.indexOf(lowerQ, start)) !== -1) { positions.push(pos); start = pos + lowerQ.length; }
+      if (!positions.length) return;
+      const frag = document.createDocumentFragment();
+      let cursor = 0;
+      positions.forEach((p) => {
+        if (p > cursor) frag.appendChild(document.createTextNode(text.slice(cursor, p)));
+        const mark = document.createElement('span');
+        mark.className = 'find-hit';
+        mark.textContent = text.slice(p, p + term.length);
+        frag.appendChild(mark);
+        matches.push(mark);
+        cursor = p + term.length;
+      });
+      if (cursor < text.length) frag.appendChild(document.createTextNode(text.slice(cursor)));
+      node.parentNode.replaceChild(frag, node);
+    });
+    $('#findCount', bar).textContent = matches.length ? '' : 'Tidak ditemukan';
+    if (matches.length) goTo(0);
+  }
+  const input = $('#findInput', bar);
+  input.addEventListener('input', () => runSearch(input.value));
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') goTo(idx + (e.shiftKey ? -1 : 1)); if (e.key === 'Escape') closeBar(); });
+  $('#findNext', bar).onclick = () => goTo(idx + 1);
+  $('#findPrev', bar).onclick = () => goTo(idx - 1);
+  function closeBar() {
+    clearHighlights();
+    bar.classList.remove('show');
+    setTimeout(() => bar.remove(), 200);
+  }
+  $('#findClose', bar).onclick = closeBar;
+  setTimeout(() => input.focus(), 260);
 }
 
 /* ---------------- Small input sheets ---------------- */
@@ -470,11 +411,10 @@ function openEmojiSheet(contentEl, commit) {
   $$('[data-emoji]', el).forEach(b => b.onclick = () => {
     restoreSelection(contentEl);
     document.execCommand('insertText', false, b.dataset.emoji);
-    commit();
+    commit(true);
     close();
   });
 }
-
 function openMathSheet(contentEl, commit) {
   const { el, close } = openSheet(`
     <textarea class="field" id="latexInput" rows="2" placeholder="contoh: E = mc^2  atau  \\frac{a}{b}"></textarea>
@@ -484,9 +424,7 @@ function openMathSheet(contentEl, commit) {
   const input = $('#latexInput', el);
   const preview = $('#mathPreview', el);
   loadKatex().then(() => {
-    input.addEventListener('input', () => {
-      try { window.katex.render(input.value, preview, { throwOnError: false }); } catch {}
-    });
+    input.addEventListener('input', () => { try { window.katex.render(input.value, preview, { throwOnError: false }); } catch {} });
   });
   $('#insertMath', el).onclick = () => {
     if (!input.value.trim()) { close(); return; }
@@ -494,11 +432,10 @@ function openMathSheet(contentEl, commit) {
     const latex = escapeHtml(input.value).replace(/"/g, '&quot;');
     document.execCommand('insertHTML', false, `<span class="math-inline" contenteditable="false" data-latex="${input.value.replace(/"/g, '&quot;')}">${latex}</span>&nbsp;`);
     renderMath(contentEl);
-    commit();
+    commit(true);
     close();
   };
 }
-
 function openDiagramSheet(contentEl, commit) {
   const { el, close } = openSheet(`
     <p class="muted" style="margin-bottom:8px">Sintaks Mermaid — flowchart, mindmap sederhana, dsb.</p>
@@ -511,11 +448,10 @@ function openDiagramSheet(contentEl, commit) {
     restoreSelection(contentEl);
     document.execCommand('insertHTML', false, `<div class="mermaid-block" contenteditable="false" data-code="${escapeHtml(code)}"><pre>${escapeHtml(code)}</pre></div><p><br></p>`);
     renderDiagrams(contentEl);
-    commit();
+    commit(true);
     close();
   };
 }
-
 function openLinkSheet(contentEl, commit) {
   const { el, close } = openSheet(`
     <input class="field" id="linkText" placeholder="Teks tautan" style="margin-bottom:8px">
@@ -528,18 +464,9 @@ function openLinkSheet(contentEl, commit) {
     const text = $('#linkText', el).value.trim() || url;
     restoreSelection(contentEl);
     document.execCommand('insertHTML', false, `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(text)}</a>&nbsp;`);
-    commit();
+    commit(true);
     close();
   };
-}
-
-async function openFolderPicker(note, folders, ctx, container) {
-  const items = [{ value: '', icon: 'browse', label: 'Tanpa folder' }, ...folders.map(f => ({ value: f.id, icon: 'browse', label: folderPath(folders, f.id) }))];
-  const choice = await sheetMenu(items, { title: 'Pindahkan ke folder' });
-  if (choice === null) return;
-  note.folderId = choice || null;
-  await updateNote(note.id, { folderId: note.folderId }, 'Folder diubah');
-  ctx.rerender();
 }
 async function openTagEditor(note, ctx) {
   const v = await promptDialog('Pisahkan dengan koma', { title: 'Edit Tag', value: (note.tags || []).join(', '), placeholder: 'sekolah, penting, revisi' });
@@ -549,10 +476,13 @@ async function openTagEditor(note, ctx) {
   ctx.rerender();
 }
 async function openColorPicker(note, ctx) {
-  const html = `<div class="chip-row">${FOLDER_COLORS.map(c => `<span class="swatch" data-color="${c}" style="background:${c}"></span>`).join('')}</div>`;
+  const html = `<div class="chip-row">
+    <span class="swatch swatch-none${!note.color ? ' active' : ''}" data-color="">${icon('close', 12)}</span>
+    ${FOLDER_COLORS.map(c => `<span class="swatch${note.color === c ? ' active' : ''}" data-color="${c}" style="background:${c}"></span>`).join('')}
+  </div>`;
   const { el, close } = openSheet(html, { title: 'Warna catatan' });
   $$('[data-color]', el).forEach(s => s.onclick = async () => {
-    note.color = s.dataset.color;
+    note.color = s.dataset.color || null;
     await updateNote(note.id, { color: note.color }, 'Warna diubah');
     close();
     ctx.rerender();
@@ -579,13 +509,388 @@ async function openWikiTarget(title, ctx) {
   if (!target) { target = await createNote({ title, content: '' }); showToast(`Catatan "${title}" dibuat`, { icon: 'plus' }); }
   ctx.navigate('#/note/' + target.id);
 }
-function exportNoteAsText(note) {
-  const text = note.title + '\n\n' + (note.content || '').replace(/<[^>]+>/g, '');
-  const blob = new Blob([text], { type: 'text/plain' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = (note.title || 'catatan') + '.txt';
-  a.click();
+
+/* ---------------- "..." overflow menu (quick row + scrollable list) ---------------- */
+function openMoreMenu(note, ctx, handlers) {
+  const locked = !!(note._locked || note.locked);
+  const quick = [
+    ['pin', note.pinned ? 'pinOff' : 'pin', note.pinned ? 'Lepas' : 'Sematkan', note.pinned],
+    ['reminder', 'bell', 'Pengingat', false],
+    ['lock', locked ? 'lock' : 'unlock', 'Kunci', locked],
+  ];
+  const list = [
+    ['reader', 'reader', 'Mode Membaca'],
+    ['tag', 'hash', 'Tambahkan Tag'],
+    ['find', 'search', 'Cari dalam Catatan'],
+    ['detail', 'info', 'Detail Catatan'],
+    ['duplicate', 'copy', 'Duplikat Catatan'],
+    ['widget', 'qrcode', 'QR & Tautan Cepat'],
+    ['pdf', 'file', 'Ekspor ke PDF'],
+    ['speak', 'speaker', 'Baca Catatan'],
+    ['fav', 'star', note.favorite ? 'Hapus dari Favorit' : 'Tambahkan ke Favorit'],
+    ['history', 'history', 'Riwayat Versi'],
+    ['archive', note.archived ? 'archiveRestore' : 'archive', note.archived ? 'Keluarkan dari Arsip' : 'Arsipkan'],
+    ['delete', 'trash', 'Hapus Catatan'],
+  ];
+  const html = `
+    <div class="more-quick-row">
+      ${quick.map(([act, ic, label, on]) => `
+        <button class="more-quick-btn" data-act="${act}">
+          <span class="mq-ic${on ? ' on' : ''}">${icon(ic, 21)}</span>
+          <span>${escapeHtml(label)}</span>
+        </button>`).join('')}
+    </div>
+    <div class="sheet-list-sep"></div>
+    ${list.map(([act, ic, label]) => `<button class="sheet-item${act === 'delete' ? ' danger' : ''}" data-act="${act}">${icon(ic)}<span>${escapeHtml(label)}</span></button>`).join('')}
+  `;
+  const { el, close } = openSheet(html, { title: note.title || 'Catatan' });
+  $$('[data-act]', el).forEach(btn => btn.onclick = () => { close(); handlers[btn.dataset.act]?.(); });
+}
+
+/* ---------------- Locked-note placeholder ---------------- */
+function renderLockedNotePlaceholder(container, ctx) {
+  container.innerHTML = `
+    <div class="topbar"><button class="icon-btn plain" id="btnLockedBack">${icon('chevronLeft', 22)}</button><span class="tb-title">Terkunci</span><span style="width:40px"></span></div>
+    <div class="empty-state" style="margin-top:90px">
+      <div class="e-icon">🔒</div>
+      <div class="e-title">Catatan Terkunci</div>
+      <p>Masukkan PIN untuk membuka catatan ini.</p>
+      <button class="btn btn-primary" id="btnUnlockNote" style="margin-top:16px">${icon('lock', 16)}<span>Buka Kunci</span></button>
+    </div>`;
+  $('#btnLockedBack', container).onclick = () => ctx.back();
+  $('#btnUnlockNote', container).onclick = async () => {
+    const ok = await ensureAuthenticated({ reason: 'Masukkan PIN untuk membuka catatan ini' });
+    if (ok) ctx.rerender();
+  };
+}
+
+function fmtNoteDate(iso) {
+  const d = new Date(iso || Date.now());
+  const now = new Date();
+  const time = d.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+  if (d.toDateString() === now.toDateString()) return `Hari Ini, ${time}`;
+  const yesterday = new Date(now); yesterday.setDate(now.getDate() - 1);
+  if (d.toDateString() === yesterday.toDateString()) return `Kemarin, ${time}`;
+  return d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' }) + `, ${time}`;
+}
+
+/* ---------------- Main view ---------------- */
+export async function renderNoteView(container, { id }, ctx) {
+  revokeObjectUrls();
+  stopSpeaking();
+  let note = await getNote(id);
+  if (!note) { container.innerHTML = `<div class="empty-state"><div class="e-icon">🗒️</div><div class="e-title">Catatan tidak ditemukan</div></div>`; return; }
+
+  const folders = await getAllFolders();
+
+  const folderGateNeeded = isFolderLocked(folders, note.folderId) && !getMasterKey();
+  if (note._locked || folderGateNeeded) {
+    const ok = await ensureAuthenticated({ reason: 'Catatan ini terkunci. Masukkan PIN untuk membukanya.' });
+    if (ok && note._locked) note = await getNote(id);
+    if (!ok || note._locked) { renderLockedNotePlaceholder(container, ctx); return; }
+  }
+
+  const backlinks = await computeBacklinks(note.title || '', note.id);
+  const attachments = await getAttachmentsByNote(note.id);
+  const voiceNotes = attachments.filter(a => (a.mime || a.type || '').startsWith('audio/'));
+  const fileAttachments = attachments.filter(a => !(a.mime || a.type || '').startsWith('audio/'));
+  const folder = folders.find(f => f.id === note.folderId) || null;
+
+  container.innerHTML = `
+    <div class="topbar note-tb-row1">
+      <button class="icon-btn plain" id="btnBack">${icon('chevronLeft', 22)}</button>
+      <button class="icon-btn plain" id="btnUndo" aria-label="Undo">${icon('undo', 19)}</button>
+      <button class="icon-btn plain" id="btnRedo" aria-label="Redo">${icon('redo', 19)}</button>
+      <span style="flex:1"></span>
+      <button class="icon-btn plain" id="btnFav">${icon('star', 20)}</button>
+      <button class="icon-btn plain" id="btnShare">${icon('shareIcon', 20)}</button>
+      <button class="icon-btn plain" id="btnMore">${icon('moreVert', 20)}</button>
+    </div>
+    <div class="note-tb-row2">
+      <span class="note-meta-date">${fmtNoteDate(note.updatedAt)}</span>
+      <button class="cat-chip-topbar" id="categoryChip">
+        <span class="cct-ic">${folder ? (folder.icon || '📁') : icon('category', 13)}</span>
+        <span>${escapeHtml(folder?.name || 'Tanpa Kategori')}</span>
+        ${icon('chevronDown', 13)}
+      </button>
+    </div>
+    <main id="noteScroll" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;position:relative">
+      <span class="save-indicator" id="saveIndicator"></span>
+      <div class="view-pad view-enter">
+        <input class="note-title-input" id="titleInput" placeholder="Judul catatan" value="${escapeHtml(note.title)}">
+        <div class="chip-row" style="margin-bottom:14px">
+          ${note.pinned ? `<span class="tag tag-static">${icon('pin', 12)} Disematkan</span>` : ''}
+          ${(note.tags || []).map(t => `<span class="tag">#${escapeHtml(t)}</span>`).join('')}
+          <button class="tag" id="tagChip">+ Tag</button>
+          <span class="swatch" id="colorChip" style="background:${note.color || 'var(--accent)'}"></span>
+        </div>
+        <div id="richContent" class="rich-content" contenteditable="true" data-placeholder="Tulis sesuatu... gunakan [[Judul]] untuk wiki-link">${note.content || ''}</div>
+
+        <div id="attachSection" style="margin-top:20px">
+          ${fileAttachments.length ? `<div class="section-title" style="margin-top:0">Lampiran</div><div class="attach-grid" id="attachGrid">${fileAttachments.map(attachmentPreviewHTML).join('')}</div>` : ''}
+          ${voiceNotes.length ? `<div class="section-title">Voice Note</div><div class="row-list" id="voiceList">${voiceNotes.map((v, i) => voiceRowHTML(v, i)).join('')}</div>` : ''}
+        </div>
+
+        ${backlinks.length ? `
+        <div class="section-title">Dipakai oleh</div>
+        <div class="row-list">${backlinks.map(n => `<button class="note-row" data-open="${n.id}"><span class="dot" style="background:${n.color || 'var(--accent)'}"></span><div class="body"><div class="title-line">${escapeHtml(n.title || 'Tanpa judul')}</div><div class="meta">${fmtRelative(n.updatedAt)}</div></div></button>`).join('')}</div>
+        ` : ''}
+        <div class="note-footer-stats" id="noteFooterStats"></div>
+        <div style="height:100px"></div>
+      </div>
+    </main>
+  `;
+
+  const titleInput = $('#titleInput', container);
+  const contentEl = $('#richContent', container);
+
+  linkifyAllWikiSyntax(contentEl);
+  migrateLegacyChecklist(contentEl);
+  await hydrateAttachments(contentEl);
+  renderMath(contentEl);
+  renderDiagrams(contentEl);
+  markBrokenLinks(contentEl);
+  renumberLists(contentEl);
+  refreshAddItemAffordance(contentEl);
+
+  /* ---------------- Word-count footer ---------------- */
+  function updateFooterStats() {
+    const words = countWords(contentEl.innerHTML);
+    const mins = Math.max(1, Math.round(words / 200));
+    const cl = extractChecklist(contentEl.innerHTML);
+    const bits = [`${words} kata`, `${mins} mnt baca`];
+    if (cl.length) bits.push(`${cl.filter(c => c.done).length}/${cl.length} selesai`);
+    $('#noteFooterStats', container).textContent = bits.join(' · ');
+  }
+  updateFooterStats();
+
+  /* ---------------- Save indicator ---------------- */
+  let saveIndicatorTimer = null;
+  function showSaving() {
+    const el = $('#saveIndicator', container);
+    if (!el) return;
+    clearTimeout(saveIndicatorTimer);
+    el.textContent = 'Menyimpan…';
+    el.classList.add('show');
+  }
+  function showSaved() {
+    const el = $('#saveIndicator', container);
+    if (!el) return;
+    el.textContent = 'Tersimpan';
+    saveIndicatorTimer = setTimeout(() => el.classList.remove('show'), 1100);
+  }
+
+  /* ---------------- Autosave + history ---------------- */
+  let dirty = false;
+  let lastVersionAt = 0;
+  const saveToDb = debounce(async () => {
+    const title = titleInput.value || '';
+    const content = getCleanContentHTML(contentEl);
+    note = await updateNote(note.id, { title, content });
+    if (Date.now() - lastVersionAt > 120000) { lastVersionAt = Date.now(); saveVersion(note.id, title, content).catch(() => {}); }
+    showSaved();
+  }, 650);
+
+  const history = createHistory({
+    getState: () => ({ title: titleInput.value, html: contentEl.innerHTML }),
+    applyState: (state) => {
+      titleInput.value = state.title;
+      contentEl.innerHTML = state.html;
+      hydrateAttachments(contentEl);
+      renderMath(contentEl);
+      renderDiagrams(contentEl);
+      markBrokenLinks(contentEl);
+      renumberLists(contentEl);
+      refreshAddItemAffordance(contentEl);
+      updateFooterStats();
+      showSaving();
+      saveToDb();
+    },
+  });
+
+  function refreshUndoRedoUI() {
+    const u = $('#btnUndo', container), r = $('#btnRedo', container);
+    if (u) u.style.opacity = history.canUndo() ? '1' : '.32';
+    if (r) r.style.opacity = history.canRedo() ? '1' : '.32';
+  }
+  refreshUndoRedoUI();
+
+  function commit(forceBreak = false) {
+    dirty = true;
+    history.record(forceBreak);
+    refreshUndoRedoUI();
+    showSaving();
+    saveToDb();
+    updateFooterStats();
+  }
+
+  titleInput.addEventListener('input', (e) => commit(e.inputType !== 'insertText'));
+  contentEl.addEventListener('input', (e) => {
+    if (e.inputType === 'insertText' && e.data === ']') convertWikiNearCaret(contentEl);
+    const isPlainTyping = e.inputType === 'insertText' || e.inputType === 'insertCompositionText';
+    commit(!isPlainTyping);
+  });
+
+  /* Unified checklist / bullet / number list engine */
+  wireListEvents(contentEl, {
+    commit,
+    onStructural: () => hapticTap(6),
+  });
+
+  contentEl.addEventListener('click', (e) => {
+    const wikiA = e.target.closest('.wiki-link');
+    if (wikiA) { e.preventDefault(); openWikiTarget(wikiA.dataset.wiki, ctx); }
+  });
+  $$('[data-open]', container).forEach(b => b.onclick = () => ctx.navigate('#/note/' + b.dataset.open));
+
+  /* ---------------- Topbar wiring ---------------- */
+  $('#btnBack', container).onclick = () => ctx.back();
+  $('#btnUndo', container).onclick = () => { history.undo(); refreshUndoRedoUI(); hapticTap(8); };
+  $('#btnRedo', container).onclick = () => { history.redo(); refreshUndoRedoUI(); hapticTap(8); };
+
+  const favBtn = $('#btnFav', container);
+  const syncFavIcon = () => { favBtn.style.color = note.favorite ? 'var(--warning)' : ''; };
+  syncFavIcon();
+  favBtn.onclick = async () => { note = await toggleFavorite(note.id); syncFavIcon(); showToast(note.favorite ? 'Ditambah ke favorit' : 'Dihapus dari favorit', { icon: 'star' }); };
+
+  $('#btnShare', container).onclick = () => openShareSheet(note);
+
+  $('#categoryChip', container).onclick = async () => {
+    const target = folder ? folder.id : null;
+    const okGate = await guardCategoryAccess(target, folders);
+    if (!okGate) return;
+    openCategoryPicker(note.folderId, async (newId) => {
+      note.folderId = newId;
+      await updateNote(note.id, { folderId: newId }, 'Kategori diubah');
+      ctx.rerender();
+    });
+  };
+  $('#tagChip', container).onclick = () => openTagEditor(note, ctx);
+  $('#colorChip', container).onclick = () => openColorPicker(note, ctx);
+
+  $('#btnMore', container).onclick = () => openMoreMenu(note, ctx, {
+    pin: async () => { note = await togglePin(note.id); showToast(note.pinned ? 'Disematkan' : 'Sematan dilepas', { icon: 'pin' }); ctx.rerender(); },
+    reminder: () => openReminderSheet(note),
+    lock: async () => {
+      const wantLock = !(note._locked || note.locked);
+      const ok = await ensureAuthenticated({ reason: wantLock ? 'Buat atau masukkan PIN untuk mengunci catatan ini' : 'Masukkan PIN untuk membuka kunci catatan ini' });
+      if (!ok) return;
+      try { note = await toggleNoteLock(note.id, wantLock); showToast(wantLock ? 'Catatan dikunci' : 'Kunci dibuka', { icon: 'lock' }); ctx.rerender(); }
+      catch { showToast('Gagal mengubah kunci catatan'); }
+    },
+    reader: () => ctx.navigate('#/note/' + note.id + '/reader'),
+    tag: () => openTagEditor(note, ctx),
+    find: () => openFindBar(container, contentEl),
+    detail: () => openNoteDetailSheet(note, contentEl, folders),
+    duplicate: async () => { const copy = await duplicateNote(note.id); showToast('Catatan diduplikat', { icon: 'copy' }); ctx.navigate('#/note/' + copy.id); },
+    widget: () => openQuickLink(note),
+    pdf: () => openShareSheet(note),
+    speak: () => openReadAloudSheet(note, parseBlocks(contentEl.innerHTML)),
+    fav: async () => { note = await toggleFavorite(note.id); syncFavIcon(); showToast(note.favorite ? 'Ditambah ke favorit' : 'Dihapus dari favorit', { icon: 'star' }); },
+    history: () => openVersionHistory(note.id, ctx),
+    archive: async () => { note = await toggleArchive(note.id); showToast(note.archived ? 'Diarsipkan' : 'Dikeluarkan dari arsip', { icon: 'archive' }); if (note.archived) ctx.navigate('#/'); },
+    delete: async () => {
+      const ok = await confirmDialog('Catatan akan dipindah ke Sampah selama 30 hari sebelum terhapus permanen.', { title: 'Hapus catatan?', okLabel: 'Hapus', danger: true });
+      if (ok) { await deleteNote(note.id); showToast('Dipindah ke Sampah', { icon: 'trash' }); ctx.navigate('#/'); }
+    },
+  });
+
+  /* ---------------- Attachments / voice ---------------- */
+  function insertInlineImage(att) {
+    restoreSelection(contentEl);
+    document.execCommand('insertHTML', false, `<img data-attachment-id="${att.id}" alt="${escapeHtml(att.name)}"><p><br></p>`);
+    hydrateAttachments(contentEl);
+    commit(true);
+  }
+  async function refreshAttachSection() {
+    const atts = await getAttachmentsByNote(note.id);
+    const voice = atts.filter(a => (a.mime || a.type || '').startsWith('audio/'));
+    const files = atts.filter(a => !(a.mime || a.type || '').startsWith('audio/'));
+    const section = $('#attachSection', container);
+    section.innerHTML = `
+      ${files.length ? `<div class="section-title" style="margin-top:0">Lampiran</div><div class="attach-grid">${files.map(attachmentPreviewHTML).join('')}</div>` : ''}
+      ${voice.length ? `<div class="section-title">Voice Note</div><div class="row-list">${voice.map((v, i) => voiceRowHTML(v, i)).join('')}</div>` : ''}
+    `;
+    wireVoiceRows(section);
+    wireAttachDelete(section);
+  }
+  function wireAttachDelete(scope) {
+    $$('[data-del-att]', scope).forEach(b => b.onclick = async () => {
+      const ok = await confirmDialog('Hapus lampiran ini?', { okLabel: 'Hapus', danger: true });
+      if (!ok) return;
+      await deleteAttachment(b.dataset.delAtt);
+      refreshAttachSection();
+    });
+    $$('[data-open-att]', scope).forEach(b => b.onclick = async () => {
+      const att = await getAttachment(b.dataset.openAtt);
+      if (!att) return;
+      const url = URL.createObjectURL(att.blob); _objectUrls.push(url);
+      window.open(url, '_blank');
+    });
+  }
+  wireAttachDelete(container);
+  wireVoiceRows(container);
+
+  /* ---------------- Floating vertical toolbar ---------------- */
+  const vtb = createVerticalToolbar($('main', container), {
+    primary: VTB_PRIMARY,
+    secondary: VTB_SECONDARY,
+    onAction: async (cmd) => {
+      if (cmd === 'font') { restoreSelection(contentEl); openFontPanel(contentEl, _savedRange, commit); return; }
+      if (cmd === 'checklist') { restoreSelection(contentEl); toggleListType(contentEl, 'checklist'); commit(true); return; }
+      if (cmd === 'bulletlist') { restoreSelection(contentEl); toggleListType(contentEl, 'bullet'); commit(true); return; }
+      if (cmd === 'numberlist') { restoreSelection(contentEl); toggleListType(contentEl, 'number'); commit(true); return; }
+      if (cmd === 'highlight') { restoreSelection(contentEl); if (!wrapSelection('mark')) showToast('Pilih teks dulu untuk disorot'); commit(true); return; }
+      if (cmd === 'emoji') return openEmojiSheet(contentEl, commit);
+      if (cmd === 'math') return openMathSheet(contentEl, commit);
+      if (cmd === 'diagram') return openDiagramSheet(contentEl, commit);
+      if (cmd === 'link') return openLinkSheet(contentEl, commit);
+      if (cmd === 'image') return pickFiles(note.id, { accept: 'image/*' }).then(atts => { atts.forEach(insertInlineImage); refreshAttachSection(); });
+      if (cmd === 'attach') return openAttachMenu(note.id, { onInlineImage: insertInlineImage, onRefresh: refreshAttachSection });
+      if (cmd === 'voice') return openVoiceRecorder(note.id, refreshAttachSection);
+      if (cmd === 'scan') return openScanFlow(note.id, refreshAttachSection);
+      if (cmd === 'draw') return openDrawCanvas(note.id, insertInlineImage);
+      if (cmd === 'table') { restoreSelection(contentEl); document.execCommand('insertHTML', false, `<table><tr><th>\u00A0</th><th>\u00A0</th><th>\u00A0</th></tr><tr><td>\u00A0</td><td>\u00A0</td><td>\u00A0</td></tr><tr><td>\u00A0</td><td>\u00A0</td><td>\u00A0</td></tr></table><p><br></p>`); commit(true); return; }
+      if (cmd === 'addrow') { restoreSelection(contentEl); addTableRow(closestTable(contentEl)); commit(true); return; }
+      if (cmd === 'addcol') { restoreSelection(contentEl); addTableCol(closestTable(contentEl)); commit(true); return; }
+      if (cmd === 'quote') { restoreSelection(contentEl); document.execCommand('formatBlock', false, 'blockquote'); commit(true); return; }
+      if (cmd === 'code') { restoreSelection(contentEl); document.execCommand('insertHTML', false, `<pre><code>kode di sini</code></pre><p><br></p>`); commit(true); return; }
+    },
+  });
+  vtb.el.addEventListener('pointerdown', (e) => { if (e.target.closest('.vtb-btn')) saveSelection(); });
+
+  return () => {
+    saveToDb.flush();
+    if (dirty) saveVersion(note.id, titleInput.value || '', getCleanContentHTML(contentEl)).catch(() => {});
+    revokeObjectUrls();
+    stopSpeaking();
+    vtb.destroy();
+  };
+}
+
+function voiceRowHTML(att, i) {
+  return `<div class="voice-row" data-voice-id="${att.id}">
+    <button class="voice-play" data-play="${att.id}">${icon('play', 16)}</button>
+    <div class="voice-wave">${Array.from({ length: 24 }, () => `<span style="height:${6 + Math.random() * 18}px"></span>`).join('')}</div>
+    <span class="tertiary" style="font-size:11px">Rekaman ${i + 1}</span>
+    <button class="icon-btn plain" data-del-voice="${att.id}">${icon('trash', 15)}</button>
+  </div>`;
+}
+function wireVoiceRows(scope) {
+  $$('[data-play]', scope).forEach(b => b.onclick = async () => {
+    const att = await getAttachment(b.dataset.play);
+    if (!att) return;
+    const url = URL.createObjectURL(att.blob);
+    _objectUrls.push(url);
+    const audio = new Audio(url);
+    audio.play();
+  });
+  $$('[data-del-voice]', scope).forEach(b => b.onclick = async () => {
+    const ok = await confirmDialog('Hapus rekaman ini?', { okLabel: 'Hapus', danger: true });
+    if (!ok) return;
+    await deleteAttachment(b.dataset.delVoice);
+    b.closest('.voice-row').remove();
+  });
 }
 
 export { computeBacklinks };
