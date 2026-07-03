@@ -56,6 +56,7 @@
   /* ---- Z-index scale ---- */
   --z-tabbar: 40;
   --z-topbar: 30;
+  --z-vtoolbar: 45;
   --z-sheet: 60;
   --z-modal: 70;
   --z-toast: 80;
