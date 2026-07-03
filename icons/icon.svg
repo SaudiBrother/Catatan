@@ -1,11 +1,127 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#7D7AFF"/>
-      <stop offset="100%" stop-color="#FF8AC2"/>
+    <!-- Latar Belakang Gelap Deep Space -->
+    <linearGradient id="darkBgCustom" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="50%" stop-color="#1e1b4b"/>
+      <stop offset="100%" stop-color="#064e3b"/>
     </linearGradient>
+
+    <!-- Glowing Aurora Mesh Spheres (Efek Glassmorphism) -->
+    <radialGradient id="auroraPurple" cx="25%" cy="20%" r="50%">
+      <stop offset="0%" stop-color="#8b5cf6" stop-opacity="0.85"/>
+      <stop offset="100%" stop-color="#8b5cf6" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="auroraCyan" cx="80%" cy="70%" r="55%">
+      <stop offset="0%" stop-color="#06b6d4" stop-opacity="0.8"/>
+      <stop offset="100%" stop-color="#06b6d4" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="auroraGreen" cx="30%" cy="85%" r="45%">
+      <stop offset="0%" stop-color="#10b981" stop-opacity="0.7"/>
+      <stop offset="100%" stop-color="#10b981" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Frosted Glass Card Gradients -->
+    <linearGradient id="glassCardCustom" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.05"/>
+    </linearGradient>
+    <linearGradient id="glassStrokeCustom" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.6"/>
+      <stop offset="50%" stop-color="#ffffff" stop-opacity="0.1"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.4"/>
+    </linearGradient>
+
+    <!-- Gradasi Warna Garis Pil 3D (Warna-Warni Nyala) -->
+    <linearGradient id="yellowLineGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#facc15"/>
+      <stop offset="100%" stop-color="#fbbf24"/>
+    </linearGradient>
+    <linearGradient id="blueLineGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#0ea5e9"/>
+      <stop offset="100%" stop-color="#38bdf8"/>
+    </linearGradient>
+    <linearGradient id="purpleLineGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#8b5cf6"/>
+      <stop offset="100%" stop-color="#c084fc"/>
+    </linearGradient>
+
+    <!-- Gradasi Ikon AI Sparkle -->
+    <linearGradient id="sparkleGlassGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="50%" stop-color="#8b5cf6"/>
+      <stop offset="100%" stop-color="#34d399"/>
+    </linearGradient>
+
+    <!-- Filters -->
+    <filter id="neonGlowCustom" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="10" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+
+    <filter id="shadowHeavyCustom" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="20" stdDeviation="25" flood-color="#000000" flood-opacity="0.65"/>
+    </filter>
+
+    <!-- ===== KLIP PEMOTONG AGAR SEMUA EFEK RAPI DI DALAM KARTU ===== -->
+    <clipPath id="roundedClip">
+      <rect width="512" height="512" rx="118"/>
+    </clipPath>
   </defs>
-  <rect width="32" height="32" rx="8" fill="url(#g)"/>
-  <path d="M9 10h10M9 14h10M9 18h7" stroke="white" stroke-width="2" stroke-linecap="round"/>
-  <path d="M19 8v4h4" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+
+  <!-- ===== BATAS LUAR (TIDAK TERKLIP) ===== -->
+  <rect x="4" y="4" width="504" height="504" rx="114" fill="none" stroke="#ffffff" stroke-width="3" stroke-opacity="0.25"/>
+
+  <!-- ===== SELURUH ISI DI DALAM AREA ROUNDED ===== -->
+  <g clip-path="url(#roundedClip)">
+    <!-- Latar Belakang & Aurora Glow -->
+    <rect width="512" height="512" rx="118" fill="url(#darkBgCustom)"/>
+    <circle cx="150" cy="140" r="180" fill="url(#auroraPurple)"/>
+    <circle cx="370" cy="350" r="200" fill="url(#auroraCyan)"/>
+    <circle cx="180" cy="400" r="160" fill="url(#auroraGreen)"/>
+
+    <!-- Lapisan Kaca Belakang (Tilted Back Layer) -->
+    <rect x="136" y="90" width="268" height="332" rx="36" fill="#ffffff" fill-opacity="0.04" stroke="url(#glassStrokeCustom)" stroke-width="1.5" transform="rotate(-5 270 256)"/>
+
+    <!-- Kartu Kaca Buram Utama -->
+    <rect x="116" y="96" width="280" height="332" rx="36" fill="url(#glassCardCustom)" stroke="url(#glassStrokeCustom)" stroke-width="2" filter="url(#shadowHeavyCustom)"/>
+
+    <!-- Header Kaca: macOS UI Traffic Lights & Title Placeholder -->
+    <circle cx="146" cy="130" r="6" fill="#f43f5e" fill-opacity="0.85"/>
+    <circle cx="166" cy="130" r="6" fill="#fbbf24" fill-opacity="0.85"/>
+    <circle cx="186" cy="130" r="6" fill="#10b981" fill-opacity="0.85"/>
+    <rect x="214" y="124" width="76" height="12" rx="6" fill="#ffffff" fill-opacity="0.25"/>
+    <rect x="296" y="124" width="32" height="12" rx="6" fill="#ffffff" fill-opacity="0.15"/>
+
+    <!-- Garis Pemisah Halus -->
+    <line x1="116" y1="156" x2="396" y2="156" stroke="#ffffff" stroke-opacity="0.15" stroke-width="1.5"/>
+
+    <!-- ================= BARIS CATATAN 1 ================= -->
+    <rect x="150" y="186" width="34" height="34" rx="10" fill="#10b981" fill-opacity="0.22" stroke="#34d399" stroke-width="1.8" filter="url(#neonGlowCustom)"/>
+    <path d="M160 203 l4.5 4.5 10.5-10.5" stroke="#34d399" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    <rect x="198" y="194" width="156" height="18" rx="9" fill="url(#yellowLineGrad)" filter="url(#neonGlowCustom)"/>
+
+    <!-- ================= BARIS CATATAN 2 ================= -->
+    <rect x="150" y="254" width="34" height="34" rx="10" fill="#06b6d4" fill-opacity="0.22" stroke="#22d3ee" stroke-width="1.8" filter="url(#neonGlowCustom)"/>
+    <circle cx="167" cy="271" r="7.5" fill="#22d3ee"/>
+    <circle cx="167" cy="271" r="3" fill="#ffffff"/>
+    <rect x="198" y="262" width="134" height="18" rx="9" fill="url(#blueLineGrad)" filter="url(#neonGlowCustom)"/>
+
+    <!-- ================= BARIS CATATAN 3 ================= -->
+    <rect x="150" y="322" width="34" height="34" rx="10" fill="#8b5cf6" fill-opacity="0.22" stroke="#a78bfa" stroke-width="1.8" filter="url(#neonGlowCustom)"/>
+    <path d="M167 330 l2.2 4.5 5 .7 -3.6 3.5 .8 5 -4.4 -2.3 -4.4 2.3 .8 -5 -3.6 -3.5 5 -.7 z" fill="#c084fc"/>
+    <rect x="198" y="330" width="146" height="18" rx="9" fill="url(#purpleLineGrad)" filter="url(#neonGlowCustom)"/>
+
+    <!-- ================= LENCANA AI SPARKLE GLASS ================= -->
+    <circle cx="388" cy="114" r="66" fill="#0f172a" fill-opacity="0.5" filter="url(#shadowHeavyCustom)"/>
+    <circle cx="388" cy="114" r="63" fill="url(#glassCardCustom)" stroke="url(#glassStrokeCustom)" stroke-width="2.5"/>
+    
+    <!-- Glowing AI Sparkle Star -->
+    <path d="M388 70 c2 17 12 27 29 29 -17 2 -27 12 -29 29 -2 -17 -12 -27 -29 -29 17 -2 27 -12 29 -29 z" fill="url(#sparkleGlassGrad)" filter="url(#neonGlowCustom)"/>
+    <path d="M388 75 c1.5 14 10 22.5 24 24 -14 1.5 -22.5 10 -24 24 -1.5 -14 -10 -22.5 -24 -24 14 -1.5 22.5 -10 24 -24 z" fill="#ffffff" fill-opacity="0.45"/>
+
+    <!-- Mini Sparkles Konstelasi -->
+    <path d="M426 74 c1 5.5 4.5 9 10 10 -5.5 1 -9 4.5 -10 10 -1 -5.5 -4.5 -9 -10 -10 5.5 -1 9 -4.5 10 -10 z" fill="#c084fc" filter="url(#neonGlowCustom)"/>
+    <path d="M344 136 c1 5.5 4.5 9 10 10 -5.5 1 -9 4.5 -10 10 -1 -5.5 -4.5 -9 -10 -10 5.5 -1 9 -4.5 10 -10 z" fill="#34d399" filter="url(#neonGlowCustom)"/>
+  </g>
 </svg>
