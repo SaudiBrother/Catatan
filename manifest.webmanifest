@@ -1,7 +1,7 @@
 {
   "name": "Catat — Catatan Pintar Offline",
   "short_name": "Catat",
-  "description": "Catatan offline lengkap dengan folder, tag, enkripsi AES-256, voice note, wiki-link, graph view, dan banyak lagi.",
+  "description": "Catatan offline lengkap dengan kategori, checklist/bullet/nomor, kunci per-catatan, voice note, wiki-link, graph view, dan banyak lagi.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
@@ -57,6 +57,13 @@
       "short_name": "Cari",
       "description": "Cari catatan",
       "url": "./index.html#/search",
+      "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Kelola Kategori",
+      "short_name": "Kategori",
+      "description": "Urutkan, kunci, atau ganti nama kategori",
+      "url": "./index.html#/categories",
       "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }]
     }
   ],

@@ -52,6 +52,14 @@
   <!-- Security -->
   <meta name="referrer" content="no-referrer">
 
+  <!-- Lightweight DNS warm-up for CDN-backed features that lazy-load on
+       first use (Font panel's Google Fonts, PDF export, QR code, math &
+       diagram rendering). Never blocks first paint. -->
+  <link rel="dns-prefetch" href="https://fonts.googleapis.com">
+  <link rel="dns-prefetch" href="https://fonts.gstatic.com">
+  <link rel="dns-prefetch" href="https://cdnjs.cloudflare.com">
+  <link rel="dns-prefetch" href="https://cdn.jsdelivr.net">
+
   <!-- Stylesheets -->
   <link rel="stylesheet" href="css/base.css">
   <link rel="stylesheet" href="css/themes.css">

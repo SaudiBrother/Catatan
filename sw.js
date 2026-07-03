@@ -5,7 +5,7 @@
    risk of cached sensitive content in the service worker cache.
    ========================================================================== */
 
-const CACHE_VERSION = 'catat-v1.0.0';
+const CACHE_VERSION = 'catat-v2.1.0';
 
 /* Assets that form the app shell — cached on install and served offline */
 const SHELL_ASSETS = [
@@ -22,18 +22,32 @@ const SHELL_ASSETS = [
   './js/views.js',
   './js/editor.js',
   './js/attachments.js',
+  './js/auth.js',
+  './js/history.js',
+  './js/richlist.js',
+  './js/fontpanel.js',
+  './js/vtoolbar.js',
+  './js/share.js',
+  './js/categories.js',
   './icons/icon.svg',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/icon-maskable-192.png',
   './icons/icon-maskable-512.png',
   './icons/apple-touch-icon.png',
+  './icons/icon-120.png',
+  './icons/icon-152.png',
   './icons/favicon-32.png',
   './icons/favicon-16.png',
+  './icons/splash-1125x2436.png',
+  './icons/splash-1170x2532.png',
+  './icons/splash-828x1792.png',
 ];
 
-/* External CDN resources loaded lazily — we cache them on first use */
-const CDN_PATTERN = /cdnjs\.cloudflare\.com|cdn\.jsdelivr\.net/;
+/* External CDN resources loaded lazily — we cache them on first use
+   (KaTeX, Mermaid, jsPDF, the QR encoder, and any Google Fonts picked in
+   the font panel all resolve through one of these hosts). */
+const CDN_PATTERN = /cdnjs\.cloudflare\.com|cdn\.jsdelivr\.net|fonts\.googleapis\.com|fonts\.gstatic\.com/;
 
 /* ── Install: pre-cache shell ── */
 self.addEventListener('install', (e) => {
