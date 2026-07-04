@@ -160,12 +160,30 @@ function withBackDismiss(rawClose) {
   let closed = false;
   let poppedByBack = false;
   window.history.pushState({ __overlay: true }, '');
-  const onPopState = () => { poppedByBack = true; guardedClose(); };
-  window.addEventListener('popstate', onPopState);
+  // The popstate listener is attached on a deferred tick rather than right
+  // away. Reason: closing an overlay calls history.back(), which queues its
+  // popstate event asynchronously instead of firing it immediately. If code
+  // immediately opens a *second* overlay right after closing the first one
+  // (e.g. the "create PIN" flow chaining straight into "confirm PIN"), that
+  // second overlay's pushState + listener registration both happen before
+  // the first overlay's still-pending popstate event fires. The event then
+  // arrives after the second overlay is already listening, so the second
+  // overlay mistakes a stale event meant for the first overlay's dismissal
+  // as its own back-button dismissal and instantly closes itself — which is
+  // exactly what made 4-digit PIN entry look like it silently failed right
+  // when the confirmation step should have appeared. Deferring registration
+  // lets any already-queued stale popstate task run first and land on no
+  // listener at all, so only genuine future back presses reach this overlay.
+  let onPopState = null;
+  const attachTimer = setTimeout(() => {
+    onPopState = () => { poppedByBack = true; guardedClose(); };
+    window.addEventListener('popstate', onPopState);
+  }, 0);
   function guardedClose() {
     if (closed) return;
     closed = true;
-    window.removeEventListener('popstate', onPopState);
+    clearTimeout(attachTimer);
+    if (onPopState) window.removeEventListener('popstate', onPopState);
     rawClose();
     if (!poppedByBack) window.history.back();
   }

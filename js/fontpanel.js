@@ -157,7 +157,7 @@ export function openFontPanel(contentEl, savedRange, commit) {
 
     <div class="field-label" style="margin-top:16px">Jenis Font</div>
     <div class="fp-font-grid">
-      ${FONT_FAMILIES.map((f, i) => `<button class="fp-font-card${i === 0 ? ' active' : ''}" data-font="${f.id}" style="${fontStyleString(f)}">${escapeHtml(f.label)}</button>`).join('')}
+      ${FONT_FAMILIES.map((f, i) => `<button class="fp-font-card${i === 0 ? ' active' : ''}" data-font="${f.id}" style="${escapeHtml(fontStyleString(f))}">${escapeHtml(f.label)}</button>`).join('')}
     </div>
   `;
 
@@ -280,7 +280,7 @@ export function openFontPanelForElement(el, persist) {
 
     <div class="field-label" style="margin-top:16px">Jenis Font</div>
     <div class="fp-font-grid">
-      ${FONT_FAMILIES.map((f) => `<button class="fp-font-card" data-font="${f.id}" style="${fontStyleString(f)}">${escapeHtml(f.label)}</button>`).join('')}
+      ${FONT_FAMILIES.map((f) => `<button class="fp-font-card" data-font="${f.id}" style="${escapeHtml(fontStyleString(f))}">${escapeHtml(f.label)}</button>`).join('')}
     </div>
   `;
 
