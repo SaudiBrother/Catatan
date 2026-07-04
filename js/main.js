@@ -294,6 +294,20 @@ async function boot() {
   // 9. Browser back/forward
   window.addEventListener('popstate', () => {
     const { route, params } = parseRoute(window.location.hash);
+    // Sheets/modals (see withBackDismiss in ui.js) push a throwaway history
+    // entry so the device back button/gesture can close them, then consume
+    // that entry with history.back() once they're done — whether they were
+    // closed by the back button itself or by tapping "Selesai"/the
+    // backdrop/finishing a multi-step flow (e.g. entering a PIN). Either
+    // way, that pop fires this exact popstate listener too, even though
+    // the hash never actually changed. Without this guard, EVERY sheet/
+    // modal close (not just ones from a real back-button press) triggered
+    // a full re-render of whatever page was underneath — wiping out
+    // scroll position and, worse, aborting any still-in-flight multi-step
+    // flow on that page (e.g. the second "confirm PIN" prompt in the app
+    // lock setup, which the first prompt's own close() would nuke before
+    // it ever got a chance to open).
+    if (_currentRoute && _currentRoute.route === route && JSON.stringify(_currentRoute.params) === JSON.stringify(params)) return;
     runRender({ route, params });
   });
 
@@ -302,7 +316,15 @@ async function boot() {
 
   // 11. Register SW
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('./sw.js').catch(() => {});
+    // `updateViaCache: 'none'` stops the browser from ever serving sw.js
+    // itself out of its own HTTP cache — without it, browsers can go up to
+    // 24h between checking whether sw.js changed at all, so a shipped fix
+    // might not even be *detected* for a day, let alone take effect. The
+    // explicit .update() call below additionally forces that check right
+    // now instead of waiting for the browser's own schedule.
+    navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' })
+      .then((reg) => reg.update().catch(() => {}))
+      .catch(() => {});
   }
 
   // 12. Start reminder daemon
