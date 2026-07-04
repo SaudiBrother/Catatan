@@ -5,7 +5,7 @@
    risk of cached sensitive content in the service worker cache.
    ========================================================================== */
 
-const CACHE_VERSION = 'catat-v2.1.0';
+const CACHE_VERSION = 'catat-v2.1.1';
 
 /* Assets that form the app shell — cached on install and served offline */
 const SHELL_ASSETS = [

@@ -52,13 +52,20 @@
   <!-- Security -->
   <meta name="referrer" content="no-referrer">
 
-  <!-- Lightweight DNS warm-up for CDN-backed features that lazy-load on
-       first use (Font panel's Google Fonts, PDF export, QR code, math &
-       diagram rendering). Never blocks first paint. -->
+  <!-- DNS warm-up for CDN-backed features. Google Fonts are now preloaded
+       eagerly right at boot (see preloadAllFonts() in fontpanel.js, called
+       from main.js) rather than waiting for the font panel to be opened, so
+       this prefetch is on the critical path for them; PDF export, QR code,
+       and math/diagram rendering still fetch their CDN lazily on first use.
+       Either way, dns-prefetch itself never blocks first paint. -->
   <link rel="dns-prefetch" href="https://fonts.googleapis.com">
   <link rel="dns-prefetch" href="https://fonts.gstatic.com">
   <link rel="dns-prefetch" href="https://cdnjs.cloudflare.com">
   <link rel="dns-prefetch" href="https://cdn.jsdelivr.net">
+  <!-- Fonts are fetched from main.js at boot; a real (not just DNS)
+       preconnect shaves the TLS handshake off that first request too. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 
   <!-- Stylesheets -->
   <link rel="stylesheet" href="css/base.css">
