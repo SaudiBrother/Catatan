@@ -6,7 +6,7 @@
    ========================================================================== */
 
 import { getMasterKey, getLockConfig, ensureLockConfig, verifyUnlock } from './db.js';
-import { $, $$, icon, openModal, showToast } from './ui.js';
+import { $, $$, icon, openModal, showToast, pinKeypadHTML, attachPinKeypad } from './ui.js';
 
 /** Resolves true once a session master key is available (prompting the user
  *  for a PIN — or to create one — if needed). Resolves false if the user
@@ -18,51 +18,65 @@ export async function ensureAuthenticated({ reason = 'Masukkan PIN untuk melanju
   return openEnterPinFlow(reason);
 }
 
+// Both flows below use the shared on-screen 0–9 keypad (see pinKeypadHTML /
+// attachPinKeypad in ui.js) instead of a native text input. There's no
+// field for a device keyboard to attach to, so there's no dependence on
+// the phone actually switching to a numeric layout — only digit buttons
+// exist, so anything other than a 4-digit PIN is physically impossible to
+// enter here, which also guarantees it can always be typed back in on the
+// app-wide lock screen (main.js), which uses this exact same component.
 function openCreatePinFlow() {
   return new Promise((resolve) => {
     const { el, close } = openModal(`
-      <h3>Buat PIN Keamanan</h3>
-      <p class="muted" style="margin-bottom:14px">PIN ini dipakai untuk mengunci catatan atau kategori tertentu. PIN yang sama juga bisa dipakai untuk mengunci seluruh aplikasi lewat Pengaturan.</p>
-      <input class="field" id="authPin1" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8" placeholder="PIN baru (min. 4 digit)" style="margin-bottom:10px" autocomplete="off">
-      <input class="field" id="authPin2" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8" placeholder="Ulangi PIN">
+      <h3 style="text-align:center">Buat PIN Keamanan</h3>
+      <p class="muted" style="margin-bottom:14px;text-align:center">PIN ini dipakai untuk mengunci catatan atau kategori tertentu. PIN yang sama juga bisa dipakai untuk mengunci seluruh aplikasi lewat Pengaturan.</p>
+      <p class="muted" id="authCreateStep" style="font-size:13px;font-weight:700;text-align:center;margin-bottom:10px">Masukkan 4 angka PIN baru</p>
+      <div style="display:flex;flex-direction:column;align-items:center">${pinKeypadHTML('authPin')}</div>
       <div class="modal-actions">
         <button class="btn btn-soft btn-block" data-act="cancel">Batal</button>
-        <button class="btn btn-primary btn-block" data-act="ok">Buat PIN</button>
       </div>`);
-    setTimeout(() => $('#authPin1', el)?.focus(), 260);
-    const submit = async () => {
-      const p1 = $('#authPin1', el).value, p2 = $('#authPin2', el).value;
-      if (p1.length < 4) { showToast('PIN minimal 4 digit'); return; }
-      if (p1 !== p2) { showToast('PIN tidak sama'); return; }
-      await ensureLockConfig(p1, 'pin');
-      close(); resolve(true);
-    };
+    const stepLabel = $('#authCreateStep', el);
     $('[data-act="cancel"]', el).onclick = () => { close(); resolve(false); };
-    $('[data-act="ok"]', el).onclick = submit;
-    el.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+
+    let firstPin = null;
+    const keypad = attachPinKeypad(el, 'authPin', {
+      onFilled: async (pin) => {
+        if (firstPin === null) {
+          firstPin = pin;
+          stepLabel.textContent = 'Ulangi 4 angka PIN yang sama';
+          keypad.clear();
+          return;
+        }
+        if (pin !== firstPin) {
+          showToast('PIN tidak sama, coba lagi');
+          firstPin = null;
+          stepLabel.textContent = 'Masukkan 4 angka PIN baru';
+          keypad.shakeAndClear();
+          return;
+        }
+        await ensureLockConfig(pin, 'pin');
+        close(); resolve(true);
+      },
+    });
   });
 }
 
 function openEnterPinFlow(reason) {
   return new Promise((resolve) => {
     const { el, close } = openModal(`
-      <h3>Verifikasi PIN</h3>
-      <p class="muted" style="margin-bottom:14px">${reason}</p>
-      <input class="field" id="authPinIn" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8" placeholder="PIN" autocomplete="off">
+      <h3 style="text-align:center">Verifikasi PIN</h3>
+      <p class="muted" style="margin-bottom:14px;text-align:center">${reason}</p>
+      <div style="display:flex;flex-direction:column;align-items:center">${pinKeypadHTML('authPin')}</div>
       <div class="modal-actions">
         <button class="btn btn-soft btn-block" data-act="cancel">Batal</button>
-        <button class="btn btn-primary btn-block" data-act="ok">Buka</button>
       </div>`);
-    setTimeout(() => $('#authPinIn', el)?.focus(), 260);
-    const submit = async () => {
-      const pin = $('#authPinIn', el).value;
-      if (!pin) return;
-      const ok = await verifyUnlock(pin);
-      if (!ok) { showToast('PIN salah', { icon: 'lock' }); $('#authPinIn', el).value = ''; return; }
-      close(); resolve(true);
-    };
     $('[data-act="cancel"]', el).onclick = () => { close(); resolve(false); };
-    $('[data-act="ok"]', el).onclick = submit;
-    el.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+    const keypad = attachPinKeypad(el, 'authPin', {
+      onFilled: async (pin) => {
+        const ok = await verifyUnlock(pin);
+        if (!ok) { showToast('PIN salah', { icon: 'lock' }); keypad.shakeAndClear(); return; }
+        close(); resolve(true);
+      },
+    });
   });
 }

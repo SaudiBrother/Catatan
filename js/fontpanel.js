@@ -36,13 +36,28 @@ function loadGoogleFont(cdn) {
   link.href = `https://fonts.googleapis.com/css2?family=${cdn.name}:wght@${cdn.weights}&display=swap`;
   document.head.appendChild(link);
 }
-// CATATAN: font CDN sengaja TIDAK dimuat eager di sini. fontpanel.js diimpor
-// oleh editor.js sejak boot aplikasi, jadi memuat semua 6 Google Font di sini
-// berarti 6 request jaringan pada SETIAP kali app dibuka — bahkan jika panel
-// font tidak pernah dibuka — bertentangan dgn janji "offline-first" di
-// index.html. loadGoogleFont() sudah dipanggil per-font tepat saat kartu
-// fontnya diklik di galeri (lihat renderFontGallery di bawah), jadi baris
-// preview tetap lazy dan hanya memicu network saat benar-benar dibutuhkan.
+
+/** Eagerly fetches every curated Google Font as soon as the app boots (see
+ *  main.js), instead of waiting for its card in the gallery below to be
+ *  tapped. Loading them on-demand only, as this used to do, caused two
+ *  real problems:
+ *   1. A note saved with a custom font only rendered correctly in the same
+ *      session where the font panel happened to be opened and that exact
+ *      font clicked. Reopen the app and the @font-face was never
+ *      requested, so the browser silently fell back to the default font —
+ *      any note using a custom font looked "unloaded" after every restart.
+ *   2. The font file was never cached by the service worker's
+ *      stale-while-revalidate handler until that first manual click, so it
+ *      needed a live network round-trip the very first time it was
+ *      actually needed.
+ *  Firing all six requests at boot lets them race in the background (they're
+ *  a different origin from the app's own assets, so they don't compete with
+ *  same-origin app files for a connection) and get cached for instant,
+ *  offline-ready use well before anyone opens the font panel. `link`
+ *  elements fetch asynchronously, so this never blocks first paint. */
+export function preloadAllFonts() {
+  FONT_FAMILIES.forEach(f => { if (f.cdn) loadGoogleFont(f.cdn); });
+}
 
 function wrapRange(range, styleText) {
   const wrapper = document.createElement('span');

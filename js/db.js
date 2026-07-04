@@ -125,9 +125,21 @@ export function isLocked() { return _locked; }
 export function getMasterKey() { return _masterKey; }
 export function lockApp() { _masterKey = null; _locked = true; }
 
+/** Guards every entry point that creates or changes a PIN. The on-screen
+ *  keypad (see pinKeypadHTML/attachPinKeypad in ui.js) already makes it
+ *  physically impossible to enter anything but 4 digits, but this check
+ *  is kept here too as a second line of defense at the data layer, in
+ *  case a PIN mode is ever wired up to a different (non-keypad) input. */
+function assertNumericPin(passphrase, mode) {
+  if (mode === 'pin' && !/^\d{4}$/.test(passphrase)) {
+    throw new Error('PIN harus terdiri dari 4 angka (0–9).');
+  }
+}
+
 /** First-time setup: derive a key from PIN/password, store a verification
  *  payload (never the password itself), then re-encrypt every existing note. */
 export async function setupLock(passphrase, mode = 'pin') {
+  assertNumericPin(passphrase, mode);
   const salt = bufToB64(randBytes(16));
   const key = await deriveKeyFromPassphrase(passphrase, salt);
   const verify = await aesEncrypt('catat-verify-ok', key);
@@ -267,6 +279,7 @@ async function maybeEncryptForSave(n) {
  *  note or a single category rather than the whole app. If a config already
  *  exists, this just verifies the passphrase and hydrates the session key. */
 export async function ensureLockConfig(passphrase, mode = 'pin') {
+  assertNumericPin(passphrase, mode);
   const existing = await getLockConfig();
   if (existing) {
     const key = await deriveKeyFromPassphrase(passphrase, existing.salt);

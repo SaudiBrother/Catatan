@@ -13,6 +13,7 @@ import {
 } from './views.js';
 import { renderNoteView } from './editor.js';
 import { renderCategoryManager } from './categories.js';
+import { preloadAllFonts } from './fontpanel.js';
 
 /* ── constants ── */
 const THEME_BG_MAP = {
@@ -240,6 +241,17 @@ function removeSplash() {
 
 /* ── Bootstrap ── */
 async function boot() {
+  // 0. Kick off font preloading immediately — fire-and-forget (just appends
+  //    <link> tags, so it never blocks anything below). Previously each
+  //    Google Font only loaded the moment its card was tapped in the font
+  //    panel, which meant a note saved with a custom font rendered in the
+  //    default font on every fresh app open until that font's card was
+  //    clicked again that session. Firing all of them here means they're
+  //    fetched (and cached by the service worker for offline reuse) the
+  //    first time the app is ever opened, not the first time someone
+  //    happens to open the font picker.
+  preloadAllFonts();
+
   // 1. Ensure DB is ready
   await initDB();
   await ensureDefaultCategories();

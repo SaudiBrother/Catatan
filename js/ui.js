@@ -216,6 +216,77 @@ export function promptDialog(message, { title = 'Masukkan teks', placeholder = '
   });
 }
 
+/* ── Numeric-only PIN keypad (shared) ──────────────────────────────────────
+ * A purpose-built on-screen 0–9 keypad, reused by every PIN entry point in
+ * the app (app-wide lock screen, "Kunci Aplikasi" setup, and the per-note /
+ * per-category PIN flows in auth.js). It deliberately does NOT use a native
+ * <input>: there is no text field for the OS to attach a keyboard to at
+ * all, so there is no dependence on the device switching to a numeric
+ * keyboard (inputmode="numeric"/pattern are only ever hints — some mobile
+ * browsers ignore them and show a full QWERTY keyboard anyway). With only
+ * digit buttons on screen, typing anything other than 0–9 is physically
+ * impossible, which also guarantees any PIN created here can always be
+ * re-typed on the app-wide lock screen later (see renderLockScreen in
+ * main.js), which uses this exact same component. */
+export function pinKeypadHTML(id, length = 4) {
+  const dots = Array.from({ length }, () => `<span class="d"></span>`).join('');
+  const keys = [1, 2, 3, 4, 5, 6, 7, 8, 9, '', 0, '⌫']
+    .map(k => `<button type="button" class="key-btn" data-k="${k}" ${k === '' ? 'style="background:none;cursor:default"' : ''}>${k}</button>`)
+    .join('');
+  return `
+    <div class="pin-dots" id="${id}Dots" style="justify-content:center;margin-bottom:var(--space-5)">${dots}</div>
+    <div class="keypad" id="${id}Keys" style="margin:0 auto">${keys}</div>`;
+}
+
+/** Wires up a pinKeypadHTML() block already inserted into `root`. Calls
+ *  onFilled(pin) each time exactly `length` digits have been entered.
+ *  Returns { getValue, clear, shakeAndClear } — call shakeAndClear() to
+ *  reject a wrong/mismatched PIN (shakes the dots, then clears them). */
+export function attachPinKeypad(root, id, { length = 4, onFilled } = {}) {
+  let value = '';
+  const dotsEl = root.querySelector(`#${id}Dots`);
+  const dots = [...dotsEl.querySelectorAll('.d')];
+  const update = () => dots.forEach((d, i) => d.classList.toggle('filled', i < value.length));
+  root.querySelectorAll(`#${id}Keys .key-btn`).forEach(btn => btn.onclick = () => {
+    const k = btn.dataset.k;
+    if (k === '') return;
+    if (k === '⌫') { value = value.slice(0, -1); update(); return; }
+    if (value.length >= length) return;
+    value += k; update();
+    if (value.length === length) onFilled?.(value);
+  });
+  return {
+    getValue: () => value,
+    clear: () => { value = ''; update(); },
+    shakeAndClear: () => {
+      dotsEl.classList.add('shake');
+      setTimeout(() => { dotsEl.classList.remove('shake'); value = ''; update(); }, 420);
+    },
+  };
+}
+
+/** Purpose-built PIN prompt used wherever the app asks someone to create,
+ *  confirm, or verify their app-wide lock PIN (Pengaturan). Uses the same
+ *  digit-only on-screen keypad as the lock screen itself — no native text
+ *  input is involved, so there's nothing for a device keyboard to get
+ *  wrong. Auto-resolves with the 4-digit string as soon as it's filled, or
+ *  resolves null if the user cancels. */
+export function promptPin(message, { title = 'Masukkan PIN' } = {}) {
+  return new Promise((resolve) => {
+    const { el, close } = openModal(`
+      <h3 style="text-align:center">${escapeHtml(title)}</h3>
+      ${message ? `<p class="muted" style="margin-bottom:14px;text-align:center">${escapeHtml(message)}</p>` : ''}
+      <div style="display:flex;flex-direction:column;align-items:center">${pinKeypadHTML('promptPin')}</div>
+      <div class="modal-actions">
+        <button class="btn btn-soft btn-block" data-act="cancel">Batal</button>
+      </div>`);
+    $('[data-act="cancel"]', el).onclick = () => { close(); resolve(null); };
+    attachPinKeypad(el, 'promptPin', {
+      onFilled: (pin) => { close(); resolve(pin); },
+    });
+  });
+}
+
 /** Small inline color/icon picker grid used by folder & tag editors. */
 export const FOLDER_COLORS = ['#5E5CE6', '#FF6FB5', '#FF9F0A', '#34C759', '#0A84FF', '#FF453A', '#AD6A2C', '#64748B', '#12B4D9', '#D6336C', '#7C3AED', '#2FAE5C'];
 export const FOLDER_EMOJI = ['📁', '🎒', '🧪', '🌏', '➗', '📚', '📖', '🎵', '🖼️', '🎮', '💡', '📌', '🗂️', '🧠', '🏆', '💼'];

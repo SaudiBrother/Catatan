@@ -18,7 +18,7 @@ import {
 
 import {
   $, $$, icon, escapeHtml, fmtRelative, fmtBytes, openSheet, sheetMenu,
-  promptDialog, confirmDialog, showToast,
+  promptDialog, promptPin, confirmDialog, showToast,
   installCardHTML, wireInstallCard, updateThemeColorMeta, canShowInstallCard,
   wireSwipeRows, hapticTap,
 } from './ui.js';
@@ -476,13 +476,45 @@ export async function renderGraph(container, params, ctx) {
   return stopGraph;
 }
 
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+function graphEmptyStateHTML() {
+  return `<div class="empty-state" style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none">
+    <div class="e-icon">🕸️</div>
+    <div class="e-title">Belum ada catatan</div>
+    <p>Buat catatan dulu untuk melihatnya di sini</p>
+  </div>`;
+}
+
 function runGraph2D(canvas, notes, ctx) {
+  const wrap = canvas.parentElement;
   const C = canvas.getContext('2d');
   const W = () => canvas.offsetWidth, H = () => canvas.offsetHeight;
   canvas.width = W(); canvas.height = H();
 
-  /* Build adjacency from wiki-links */
-  const nodeMap = new Map(notes.map(n => [n.id, { id: n.id, title: n.title || '…', color: n.color || null, x: Math.random() * W(), y: Math.random() * H(), vx: 0, vy: 0, r: 10 }]));
+  if (!notes.length) {
+    wrap.insertAdjacentHTML('beforeend', graphEmptyStateHTML());
+    return () => {};
+  }
+
+  /* Seed positions on a sunflower/phyllotaxis spiral instead of pure
+     Math.random(): guarantees minimum spacing between every pair of nodes
+     from frame one. Two nodes spawning on (near-)identical coordinates was
+     exactly what made the old repulsion formula below explode — division
+     by a near-zero distance produced a huge one-tick velocity kick that
+     flung a node far outside the canvas before gravity ever got a chance
+     to pull it back. */
+  const GOLDEN_ANGLE = 2.399963;
+  const nodeMap = new Map();
+  notes.forEach((n, i) => {
+    const rr = 26 * Math.sqrt(i + 1);
+    const th = i * GOLDEN_ANGLE;
+    nodeMap.set(n.id, {
+      id: n.id, title: n.title || '…', color: n.color || null,
+      x: W() / 2 + rr * Math.cos(th), y: H() / 2 + rr * Math.sin(th),
+      vx: 0, vy: 0, r: 10,
+    });
+  });
   const edges = [];
   notes.forEach(n => {
     extractWikiLinks(n.content || '').forEach(t => {
@@ -491,17 +523,21 @@ function runGraph2D(canvas, notes, ctx) {
     });
   });
 
-  let zoom = 1, panX = 0, panY = 0, dragging = null, pinch = null, highlighted = null;
-  let raf;
+  let zoom = 1, panX = 0, panY = 0, dragging = null, highlighted = null;
+  let raf, tick = 0, settled = false, userInteracted = false;
+  const MAX_SPEED = 40;       // px/tick hard cap — a defensive backstop so no single tick can ever fling a node off-canvas, however large the force
+  const MIN_ZOOM = 0.03, MAX_ZOOM = 3; // generous enough that auto-fit can always frame the whole graph, even with 100+ notes
 
   /* Force simulation */
   function simulate() {
     const nodes = [...nodeMap.values()];
-    // Repulsion
+    let maxSpeed = 0;
+    // Repulsion — softened at close range (+280 instead of the old +1) so
+    // nodes that start out near each other repel gently instead of exploding.
     for (let i = 0; i < nodes.length; i++) for (let j = i + 1; j < nodes.length; j++) {
       const dx = nodes[j].x - nodes[i].x, dy = nodes[j].y - nodes[i].y;
-      const d2 = dx * dx + dy * dy + 1;
-      const f = 2200 / d2;
+      const d2 = dx * dx + dy * dy + 280;
+      const f = 1500 / d2;
       nodes[i].vx -= dx * f; nodes[i].vy -= dy * f;
       nodes[j].vx += dx * f; nodes[j].vy += dy * f;
     }
@@ -515,22 +551,66 @@ function runGraph2D(canvas, notes, ctx) {
       na.vx += dx / d * f; na.vy += dy / d * f;
       nb.vx -= dx / d * f; nb.vy -= dy / d * f;
     });
-    // Gravity toward center
+    // Gravity toward center — noticeably stronger relative to the (also
+    // softened) repulsion above than the old 2200/0.004 pairing, so a
+    // handful of notes settle into a cluster sized for a phone screen
+    // instead of a spread many times wider than the canvas.
     const cx = canvas.width / 2, cy = canvas.height / 2;
     nodes.forEach(n => {
-      n.vx += (cx - n.x) * 0.004; n.vy += (cy - n.y) * 0.004;
+      if (dragging && !dragging.pan && dragging.n === n) return; // don't fight the user's own drag
+      n.vx += (cx - n.x) * 0.02; n.vy += (cy - n.y) * 0.02;
       n.vx *= 0.78; n.vy *= 0.78;
+      const sp = Math.hypot(n.vx, n.vy);
+      if (sp > MAX_SPEED) { n.vx = n.vx / sp * MAX_SPEED; n.vy = n.vy / sp * MAX_SPEED; }
       n.x += n.vx; n.y += n.vy;
+      maxSpeed = Math.max(maxSpeed, sp);
     });
+    return maxSpeed;
   }
 
-  let tick = 0;
+  function bounds() {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    nodeMap.forEach(n => { minX = Math.min(minX, n.x); maxX = Math.max(maxX, n.x); minY = Math.min(minY, n.y); maxY = Math.max(maxY, n.y); });
+    return { minX, minY, maxX, maxY };
+  }
+  /* Always know the pan/zoom that would frame every node — used both to
+     continuously ease the camera into view while the layout is settling,
+     and to power the "center" button. This is the hard guarantee that the
+     graph can never again render with every node sitting off-canvas. */
+  function targetFit() {
+    const { minX, minY, maxX, maxY } = bounds();
+    const bw = Math.max(maxX - minX, 1), bh = Math.max(maxY - minY, 1);
+    const pad = 64;
+    const tz = clamp(Math.min((canvas.width - pad * 2) / bw, (canvas.height - pad * 2) / bh), MIN_ZOOM, MAX_ZOOM);
+    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+    return { zoom: tz, panX: canvas.width / 2 - cx * tz, panY: canvas.height / 2 - cy * tz };
+  }
+  { const f = targetFit(); zoom = f.zoom; panX = f.panX; panY = f.panY; } // frame correctly on the very first paint, before simulation even starts
+
   function draw() {
-    if (tick < 120) { simulate(); tick++; }
-    canvas.width = W(); canvas.height = H();
+    const cw = canvas.offsetWidth, ch = canvas.offsetHeight;
+    if (canvas.width !== cw) canvas.width = cw;
+    if (canvas.height !== ch) canvas.height = ch;
+
+    if (!settled && tick < 400) {
+      const sp = simulate();
+      tick++;
+      if (tick > 40 && sp < 0.4) settled = true;
+    } else {
+      settled = true;
+    }
+    if (!userInteracted) {
+      const f = targetFit();
+      zoom += (f.zoom - zoom) * 0.08;
+      panX += (f.panX - panX) * 0.08;
+      panY += (f.panY - panY) * 0.08;
+    }
+
     C.clearRect(0, 0, canvas.width, canvas.height);
     C.save(); C.translate(panX, panY); C.scale(zoom, zoom);
-    const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#5E5CE6';
+    const rootStyle = getComputedStyle(document.documentElement);
+    const accent = rootStyle.getPropertyValue('--accent').trim() || '#5E5CE6';
+    const textColor = rootStyle.getPropertyValue('--text').trim() || '#fff';
     // Edges
     edges.forEach(({ a, b }) => {
       const na = nodeMap.get(a), nb = nodeMap.get(b);
@@ -546,7 +626,7 @@ function runGraph2D(canvas, notes, ctx) {
       if (isHL) { C.strokeStyle = '#fff'; C.lineWidth = 2 / zoom; C.stroke(); }
       if (zoom > 0.6) {
         C.font = `${Math.round(11 / zoom)}px -apple-system, sans-serif`;
-        C.fillStyle = 'var(--text)';
+        C.fillStyle = textColor; // canvas can't resolve var(--text) itself — must pass the resolved color in
         C.fillText(n.title.slice(0, 20), n.x + n.r + 3, n.y + 4);
       }
     });
@@ -559,6 +639,7 @@ function runGraph2D(canvas, notes, ctx) {
   function nodeAt(wx, wy) { for (const n of nodeMap.values()) { const dx = n.x - wx, dy = n.y - wy; if (dx * dx + dy * dy < (n.r + 6) * (n.r + 6)) return n; } return null; }
 
   canvas.addEventListener('pointerdown', (e) => {
+    userInteracted = true;
     const rect = canvas.getBoundingClientRect();
     const [wx, wy] = ptWorld(e.clientX - rect.left, e.clientY - rect.top);
     const hit = nodeAt(wx, wy);
@@ -576,13 +657,14 @@ function runGraph2D(canvas, notes, ctx) {
   });
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
+    userInteracted = true;
     const factor = e.deltaY < 0 ? 1.1 : 0.91;
-    zoom = Math.max(0.2, Math.min(3, zoom * factor));
+    zoom = clamp(zoom * factor, MIN_ZOOM, MAX_ZOOM);
   }, { passive: false });
 
-  $('#gZoomIn', canvas.parentElement.parentElement).onclick = () => { zoom = Math.min(3, zoom * 1.2); };
-  $('#gZoomOut', canvas.parentElement.parentElement).onclick = () => { zoom = Math.max(0.2, zoom * 0.83); };
-  $('#gCenter', canvas.parentElement.parentElement).onclick = () => { zoom = 1; panX = 0; panY = 0; };
+  $('#gZoomIn', wrap).onclick = () => { userInteracted = true; zoom = clamp(zoom * 1.2, MIN_ZOOM, MAX_ZOOM); };
+  $('#gZoomOut', wrap).onclick = () => { userInteracted = true; zoom = clamp(zoom * 0.83, MIN_ZOOM, MAX_ZOOM); };
+  $('#gCenter', wrap).onclick = () => { userInteracted = false; const f = targetFit(); zoom = f.zoom; panX = f.panX; panY = f.panY; };
 
   const onGraphSearch = (e) => { highlighted = e.detail; };
   document.addEventListener('graph:search', onGraphSearch);
@@ -594,83 +676,219 @@ function runGraph2D(canvas, notes, ctx) {
 }
 
 function runGraph3D(canvas, notes, ctx) {
-  /* Minimal 3-D force graph without Three.js — project nodes onto 2D canvas
-     using simple perspective, orbit via drag, auto-rotate slowly. */
+  /* Real 3-D force graph rendered on a 2-D canvas (no Three.js dependency
+     needed for a few dozen nodes). Nodes are simulated in true x/y/z space
+     — repulsion, link springs and centering gravity, the same recipe as
+     the 2-D graph — then projected through a perspective camera that
+     orbits on drag and idles into a slow auto-rotate. A floor grid and
+     depth-based fog are what actually sell the "3-D" feeling; a plain
+     rotating point cloud reads as flat no matter how correct the math is. */
+  const wrap = canvas.parentElement;
   const C = canvas.getContext('2d');
   canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight;
-  const W = canvas.width, H = canvas.height;
-  const FOV = 600;
 
-  const nodes = notes.map((n, i) => ({
-    id: n.id, title: n.title || '…', color: n.color || null,
-    x: (Math.random() - .5) * 300, y: (Math.random() - .5) * 300, z: (Math.random() - .5) * 300,
-    vx: 0, vy: 0, vz: 0,
-  }));
+  if (!notes.length) {
+    wrap.insertAdjacentHTML('beforeend', graphEmptyStateHTML());
+    return () => {};
+  }
+
+  const FOCAL = 640;
+  const MIN_DIST = 120, MAX_DIST = 2000; // generous enough that auto-fit can always frame the whole graph, even with 100+ notes
+  let camDist = 420; // this doubles as "zoom" — distance of the camera from the origin
+
+  /* Seed on a Fibonacci sphere: nodes are evenly spread with a guaranteed
+     minimum angular spacing, so — just like the 2-D spiral above — no two
+     nodes ever spawn on top of each other. That was the root cause of the
+     "everything flies to the edge of the universe" bug: a near-zero
+     starting distance produced a near-infinite repulsion force between two
+     nodes on the very first tick. It also just looks like a "3-D graph"
+     immediately, before the sim or the drag has done anything. */
+  const N = notes.length;
+  const BASE_R = 90 + Math.min(N, 30) * 3;
+  const nodes = notes.map((n, i) => {
+    const idx = i + 0.5;
+    const phi = Math.acos(1 - (2 * idx) / N);
+    const theta = Math.PI * (1 + Math.sqrt(5)) * idx;
+    return {
+      id: n.id, title: n.title || '…', color: n.color || null,
+      x: BASE_R * Math.sin(phi) * Math.cos(theta),
+      y: BASE_R * Math.sin(phi) * Math.sin(theta),
+      z: BASE_R * Math.cos(phi),
+      vx: 0, vy: 0, vz: 0,
+    };
+  });
   const nodeMap = new Map(nodes.map(n => [n.id, n]));
   const edges = [];
   notes.forEach(n => {
     extractWikiLinks(n.content || '').forEach(t => {
       const target = notes.find(m => (m.title || '').toLowerCase() === t.toLowerCase());
-      if (target) edges.push({ a: n.id, b: target.id });
+      if (target && target.id !== n.id) edges.push({ a: n.id, b: target.id });
     });
   });
 
-  let rotY = 0, rotX = 0.3, isDragging = false, lastX, lastY, raf;
+  const DEFAULT_ROT_Y = 0.5, DEFAULT_ROT_X = 0.4;
+  let rotY = DEFAULT_ROT_Y, rotX = DEFAULT_ROT_X;
+  let isDragging = false, lastX, lastY, downX, downY, moved = false, raf;
+  let tick = 0, settled = false, userInteracted = false;
+  const MAX_SPEED = 6;
+
+  function simulate() {
+    let maxSpeed = 0;
+    for (let i = 0; i < nodes.length; i++) for (let j = i + 1; j < nodes.length; j++) {
+      const a = nodes[i], b = nodes[j];
+      const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+      const d2 = dx * dx + dy * dy + dz * dz + 250;
+      const f = 900 / d2;
+      a.vx -= dx * f; a.vy -= dy * f; a.vz -= dz * f;
+      b.vx += dx * f; b.vy += dy * f; b.vz += dz * f;
+    }
+    edges.forEach(({ a, b }) => {
+      const na = nodeMap.get(a), nb = nodeMap.get(b);
+      if (!na || !nb) return;
+      const dx = nb.x - na.x, dy = nb.y - na.y, dz = nb.z - na.z;
+      const d = Math.sqrt(dx * dx + dy * dy + dz * dz) + 0.01;
+      const f = (d - 110) * 0.01;
+      na.vx += dx / d * f; na.vy += dy / d * f; na.vz += dz / d * f;
+      nb.vx -= dx / d * f; nb.vy -= dy / d * f; nb.vz -= dz / d * f;
+    });
+    nodes.forEach(n => {
+      n.vx += -n.x * 0.08; n.vy += -n.y * 0.08; n.vz += -n.z * 0.08;
+      n.vx *= 0.8; n.vy *= 0.8; n.vz *= 0.8;
+      const sp = Math.sqrt(n.vx * n.vx + n.vy * n.vy + n.vz * n.vz);
+      if (sp > MAX_SPEED) { const s = MAX_SPEED / sp; n.vx *= s; n.vy *= s; n.vz *= s; }
+      n.x += n.vx; n.y += n.vy; n.z += n.vz;
+      maxSpeed = Math.max(maxSpeed, sp);
+    });
+    return maxSpeed;
+  }
+
+  function targetCamDist() {
+    let maxR = 10;
+    nodes.forEach(n => { maxR = Math.max(maxR, Math.hypot(n.x, n.y, n.z)); });
+    return clamp(maxR * 2.15 + 70, MIN_DIST, MAX_DIST);
+  }
+  camDist = targetCamDist(); // frame correctly on the very first paint
 
   function project(x, y, z) {
     const cosY = Math.cos(rotY), sinY = Math.sin(rotY);
     const cosX = Math.cos(rotX), sinX = Math.sin(rotX);
-    let nx = x * cosY + z * sinY;
-    let ny = y * cosX - (z * cosY - x * sinY) * sinX;
-    let nz = z * cosY - x * sinY + (y * sinX);
-    nz = -nz;
-    const scale = FOV / (FOV + nz + 400);
-    return { sx: nx * scale + W / 2, sy: ny * scale + H / 2, scale };
+    // Yaw around Y, then pitch around X — a standard, non-gimbal-locked orbit camera.
+    const x1 = x * cosY + z * sinY;
+    const z1 = z * cosY - x * sinY;
+    const y2 = y * cosX - z1 * sinX;
+    const z2 = y * sinX + z1 * cosX;
+    const denom = Math.max(camDist + z2, FOCAL * 0.12); // never let a point cross behind the camera and blow the scale up to infinity
+    const scale = FOCAL / denom;
+    return { sx: x1 * scale + canvas.width / 2, sy: y2 * scale + canvas.height / 2, scale, depth: z2 };
+  }
+
+  function drawFloor() {
+    const gridY = BASE_R * 1.2;
+    const rings = [0.35, 0.7, 1.05].map(f => BASE_R * 1.3 * f);
+    C.save();
+    C.lineWidth = 1;
+    rings.forEach(rad => {
+      C.strokeStyle = 'rgba(140,130,255,.12)';
+      C.beginPath();
+      for (let a = 0; a <= Math.PI * 2 + 0.0001; a += Math.PI / 28) {
+        const p = project(rad * Math.cos(a), gridY, rad * Math.sin(a));
+        if (a === 0) C.moveTo(p.sx, p.sy); else C.lineTo(p.sx, p.sy);
+      }
+      C.stroke();
+    });
+    const outer = rings[rings.length - 1];
+    for (let a = 0; a < Math.PI * 2; a += Math.PI / 8) {
+      const p1 = project(outer * 0.2 * Math.cos(a), gridY, outer * 0.2 * Math.sin(a));
+      const p2 = project(outer * Math.cos(a), gridY, outer * Math.sin(a));
+      C.beginPath(); C.moveTo(p1.sx, p1.sy); C.lineTo(p2.sx, p2.sy); C.stroke();
+    }
+    C.restore();
   }
 
   function draw() {
-    canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight;
+    const cw = canvas.offsetWidth, ch = canvas.offsetHeight;
+    if (canvas.width !== cw) canvas.width = cw;
+    if (canvas.height !== ch) canvas.height = ch;
     C.clearRect(0, 0, canvas.width, canvas.height);
-    if (!isDragging) rotY += 0.003;
-    const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#7D7AFF';
 
+    if (!settled && tick < 400) {
+      const sp = simulate();
+      tick++;
+      if (tick > 40 && sp < 0.05) settled = true;
+    } else {
+      settled = true;
+    }
+    if (!isDragging) rotY += 0.003;
+    if (!userInteracted) camDist += (targetCamDist() - camDist) * 0.08;
+
+    drawFloor();
+
+    const baseScale = FOCAL / camDist;
     edges.forEach(({ a, b }) => {
       const na = nodeMap.get(a), nb = nodeMap.get(b); if (!na || !nb) return;
       const pa = project(na.x, na.y, na.z), pb = project(nb.x, nb.y, nb.z);
+      const fog = clamp(((pa.scale + pb.scale) / 2) / baseScale, 0.25, 1);
       C.beginPath(); C.moveTo(pa.sx, pa.sy); C.lineTo(pb.sx, pb.sy);
-      C.strokeStyle = 'rgba(120,100,200,.18)'; C.lineWidth = 1; C.stroke();
+      C.strokeStyle = `rgba(130,115,220,${(0.28 * fog).toFixed(3)})`; C.lineWidth = 1; C.stroke();
     });
-    const sorted = [...nodeMap.values()].sort((a, b) => {
-      const pA = project(a.x, a.y, a.z), pB = project(b.x, b.y, b.z);
-      return pA.scale - pB.scale;
-    });
-    sorted.forEach(n => {
-      const { sx, sy, scale } = project(n.x, n.y, n.z);
-      const r = 7 * scale;
-      C.beginPath(); C.arc(sx, sy, r, 0, Math.PI * 2);
+
+    const rootStyle = getComputedStyle(document.documentElement);
+    const accent = rootStyle.getPropertyValue('--accent').trim() || '#7D7AFF';
+    const textColor = rootStyle.getPropertyValue('--text').trim() || '#eee'; // resolved here — canvas can't read var(--text) itself
+    const sorted = nodes.map(n => ({ n, p: project(n.x, n.y, n.z) })).sort((A, B) => B.p.depth - A.p.depth);
+    sorted.forEach(({ n, p }) => {
+      const fog = clamp(p.scale / baseScale, 0.32, 1);
+      const r = 7 * p.scale;
+      C.globalAlpha = fog;
+      C.beginPath(); C.arc(p.sx, p.sy, r, 0, Math.PI * 2);
       C.fillStyle = n.color || accent; C.fill();
-      if (scale > 0.7) {
-        C.font = `${Math.round(11 * scale)}px -apple-system,sans-serif`;
-        C.fillStyle = document.documentElement.getAttribute('data-theme')?.includes('dark') ? '#eee' : '#111';
-        C.fillText(n.title.slice(0, 18), sx + r + 2, sy + 4);
+      if (p.scale > baseScale * 0.8) {
+        C.font = `${Math.round(11 * p.scale)}px -apple-system,sans-serif`;
+        C.fillStyle = textColor;
+        C.fillText(n.title.slice(0, 18), p.sx + r + 2, p.sy + 4);
       }
+      C.globalAlpha = 1;
     });
+
     raf = requestAnimationFrame(draw);
   }
   draw();
 
-  canvas.addEventListener('pointerdown', (e) => { isDragging = true; lastX = e.clientX; lastY = e.clientY; });
-  canvas.addEventListener('pointermove', (e) => { if (!isDragging) return; rotY += (e.clientX - lastX) * 0.006; rotX += (e.clientY - lastY) * 0.006; lastX = e.clientX; lastY = e.clientY; });
-  canvas.addEventListener('pointerup', () => isDragging = false);
-  canvas.addEventListener('click', (e) => {
+  canvas.addEventListener('pointerdown', (e) => {
+    isDragging = true; userInteracted = true; moved = false;
+    lastX = downX = e.clientX; lastY = downY = e.clientY;
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!isDragging) return;
+    rotY += (e.clientX - lastX) * 0.006;
+    rotX = clamp(rotX + (e.clientY - lastY) * 0.006, -1.4, 1.4);
+    lastX = e.clientX; lastY = e.clientY;
+    if (Math.hypot(e.clientX - downX, e.clientY - downY) > 6) moved = true;
+  });
+  canvas.addEventListener('pointerup', (e) => {
+    isDragging = false;
+    if (moved) return;
     const rect = canvas.getBoundingClientRect();
     const mx = e.clientX - rect.left, my = e.clientY - rect.top;
-    for (const n of nodeMap.values()) {
-      const { sx, sy, scale } = project(n.x, n.y, n.z);
-      const dx = mx - sx, dy = my - sy;
-      if (dx * dx + dy * dy < (7 * scale + 6) ** 2) { ctx.navigate('#/note/' + n.id); break; }
-    }
+    let best = null, bestD2 = Infinity;
+    nodeMap.forEach(n => {
+      const p = project(n.x, n.y, n.z);
+      const dx = mx - p.sx, dy = my - p.sy;
+      const d2 = dx * dx + dy * dy;
+      const hitR2 = (7 * p.scale + 8) ** 2;
+      if (d2 < hitR2 && d2 < bestD2) { bestD2 = d2; best = n; }
+    });
+    if (best) ctx.navigate('#/note/' + best.id);
   });
+  canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    userInteracted = true;
+    camDist = clamp(camDist * (e.deltaY < 0 ? 0.9 : 1.1), MIN_DIST, MAX_DIST);
+  }, { passive: false });
+
+  $('#gZoomIn', wrap).onclick = () => { userInteracted = true; camDist = clamp(camDist * 0.82, MIN_DIST, MAX_DIST); };
+  $('#gZoomOut', wrap).onclick = () => { userInteracted = true; camDist = clamp(camDist * 1.22, MIN_DIST, MAX_DIST); };
+  $('#gCenter', wrap).onclick = () => { userInteracted = false; rotY = DEFAULT_ROT_Y; rotX = DEFAULT_ROT_X; camDist = targetCamDist(); };
 
   return () => cancelAnimationFrame(raf);
 }
@@ -753,7 +971,7 @@ export async function renderSettings(container, params, ctx) {
           <div class="stext"><b>Buka dengan Sidik Jari</b><span>Akses cepat tanpa ketik PIN</span></div>
           <button class="btn btn-sm btn-soft" id="fpBtn">${lockCfg.fingerprint ? 'Sudah diatur' : 'Siapkan'}</button>
         </div>` : ''}
-        <p class="muted" style="padding:10px 14px 4px;font-size:12px">PIN yang sama juga dipakai untuk mengunci kategori atau catatan tertentu dari editor, walau Kunci Aplikasi ini nonaktif.</p>
+        <p class="muted" style="padding:10px 14px 4px;font-size:12px">PIN terdiri dari 4 angka. PIN yang sama juga dipakai untuk mengunci kategori atau catatan tertentu dari editor, walau Kunci Aplikasi ini nonaktif.</p>
       </div>
 
       <!-- Data -->
@@ -797,7 +1015,7 @@ export async function renderSettings(container, params, ctx) {
 
       <!-- App info + install banner at bottom -->
       <div id="installCardSlot">${installCardHTML()}</div>
-      <p style="text-align:center;color:var(--text-tertiary);font-size:12px;margin-top:16px">Catat v2.1 · Semua data tersimpan di perangkat kamu · Tidak perlu internet</p>
+      <p style="text-align:center;color:var(--text-tertiary);font-size:12px;margin-top:16px">Catat v2.1.1 · Semua data tersimpan di perangkat kamu · Tidak perlu internet</p>
     </div>
     </main>`;
 
@@ -819,14 +1037,15 @@ export async function renderSettings(container, params, ctx) {
   // Lock toggle
   $('#lockToggle', container)?.addEventListener('click', async () => {
     if (!locked) {
-      const pin = await promptDialog('Masukkan PIN (minimal 4 digit)', { title: 'Buat PIN', placeholder: '••••', okLabel: 'Buat PIN' });
-      if (!pin || pin.length < 4) return;
-      const confirm = await promptDialog('Ulangi PIN', { title: 'Konfirmasi PIN', placeholder: '••••', okLabel: 'Konfirmasi' });
+      const pin = await promptPin('Buat 4 angka untuk mengunci aplikasi. PIN yang sama dipakai untuk membuka aplikasi setiap kali terkunci.', { title: 'Buat PIN', okLabel: 'Lanjut' });
+      if (!pin) return;
+      const confirm = await promptPin('Masukkan ulang 4 angka yang sama', { title: 'Konfirmasi PIN', okLabel: 'Konfirmasi' });
+      if (!confirm) return;
       if (pin !== confirm) { showToast('PIN tidak cocok', { icon: 'lock' }); return; }
       await setupLock(pin, 'pin');
       showToast('Kunci diaktifkan', { icon: 'lock' }); ctx.rerender();
     } else {
-      const pin = await promptDialog('Masukkan PIN untuk menonaktifkan', { title: 'Verifikasi PIN', placeholder: '••••' });
+      const pin = await promptPin('Masukkan 4 angka PIN untuk menonaktifkan kunci', { title: 'Verifikasi PIN', okLabel: 'Nonaktifkan' });
       if (!pin) return;
       const ok = await disableLock(pin);
       if (!ok) { showToast('PIN salah', { icon: 'close' }); return; }
@@ -836,7 +1055,7 @@ export async function renderSettings(container, params, ctx) {
 
   // Fingerprint
   $('#fpBtn', container)?.addEventListener('click', async () => {
-    const pin = await promptDialog('Masukkan PIN saat ini untuk konfirmasi', { title: 'Verifikasi PIN' });
+    const pin = await promptPin('Masukkan 4 angka PIN saat ini untuk konfirmasi', { title: 'Verifikasi PIN', okLabel: 'Konfirmasi' });
     if (!pin) return;
     try { await setupFingerprint(pin); showToast('Sidik jari berhasil diatur', { icon: 'fingerprint' }); }
     catch (e) { showToast('Gagal: ' + (e.message || 'Error'), { icon: 'close' }); }
