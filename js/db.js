@@ -591,6 +591,50 @@ export async function setSetting(key, value) {
 }
 
 /* --------------------------------------------------------------------------
+   Template Cepat (Quick Templates) — same "one JSON blob in settings" model
+   as everything else here (streak, lock, theme). Previously a fixed array
+   baked straight into the Settings screen; now a user-managed list, mirroring
+   how Kategori works: add, rename/edit, reorder, delete.
+   -------------------------------------------------------------------------- */
+const DEFAULT_TEMPLATES = [
+  { id: 'default-1', icon: '📝', label: 'Jurnal Harian', content: '<h2>Jurnal — ' + new Date().toLocaleDateString('id-ID') + '</h2><p>Hari ini aku...</p><h3>Syukur</h3><ul><li>...</li></ul><h3>Hal yang perlu diperbaiki</h3><ul><li>...</li></ul>' },
+  { id: 'default-2', icon: '🧪', label: 'Laporan Praktikum', content: '<h2>Laporan Praktikum</h2><h3>Tujuan</h3><p>...</p><h3>Alat & Bahan</h3><ul><li>...</li></ul><h3>Langkah Kerja</h3><ol><li>...</li></ol><h3>Hasil & Pembahasan</h3><p>...</p><h3>Kesimpulan</h3><p>...</p>' },
+  { id: 'default-3', icon: '🎮', label: 'Ide Game', content: '<h2>Konsep Game</h2><h3>Genre</h3><p>...</p><h3>Cerita Singkat</h3><p>...</p><h3>Mekanik Utama</h3><ul><li>...</li></ul><h3>Referensi</h3><p>...</p>' },
+  { id: 'default-4', icon: '📅', label: 'Planner Proyek', content: '<h2>Proyek: ...</h2><h3>Tujuan</h3><p>...</p><h3>Tugas</h3>' + ['Riset', 'Desain', 'Implementasi', 'Review'].map(t => `<div class="checklist-item" data-checked="false"><span class="cbx"></span><span class="ctext">${t}</span></div>`).join('') + '<h3>Catatan</h3><p>...</p>' },
+  { id: 'default-5', icon: '📖', label: 'Bab Novel', content: '<h2>Bab — </h2><h3>Ringkasan</h3><p>...</p><hr><p>Paragraf pembuka...</p>' },
+  { id: 'default-6', icon: '🔬', label: 'Catatan Riset', content: '<h2>Riset: ...</h2><h3>Pertanyaan Utama</h3><p>...</p><h3>Sumber</h3><ul><li>...</li></ul><h3>Temuan</h3><p>...</p><h3>Kesimpulan Sementara</h3><p>...</p>' },
+];
+export async function getTemplates() {
+  return await getSetting('templates', DEFAULT_TEMPLATES);
+}
+export async function saveTemplates(templates) {
+  await setSetting('templates', templates);
+  return templates;
+}
+export async function addTemplate(tpl) {
+  const templates = await getTemplates();
+  const withId = { id: uid(), icon: tpl.icon || '📄', label: tpl.label || 'Template', content: tpl.content || '' };
+  const next = [...templates, withId];
+  await saveTemplates(next);
+  return withId;
+}
+export async function updateTemplate(id, patch) {
+  const templates = await getTemplates();
+  const next = templates.map(t => t.id === id ? { ...t, ...patch } : t);
+  await saveTemplates(next);
+  return next.find(t => t.id === id);
+}
+export async function deleteTemplate(id) {
+  const templates = await getTemplates();
+  await saveTemplates(templates.filter(t => t.id !== id));
+}
+export async function reorderTemplates(orderedIds) {
+  const templates = await getTemplates();
+  const byId = new Map(templates.map(t => [t.id, t]));
+  await saveTemplates(orderedIds.map(id => byId.get(id)).filter(Boolean));
+}
+
+/* --------------------------------------------------------------------------
    Reminders
    -------------------------------------------------------------------------- */
 

@@ -14,13 +14,14 @@ import {
   _dbAll, deleteNote, toggleFavorite, updateNote, getActiveNotes, getArchivedNotes,
   getTrashedNotes, togglePin, toggleArchive, restoreNote, permanentlyDeleteNote,
   emptyTrash, duplicateNote, isFolderLocked, getMasterKey,
+  getTemplates, addTemplate, updateTemplate, deleteTemplate, reorderTemplates,
 } from './db.js';
 
 import {
   $, $$, icon, escapeHtml, fmtRelative, fmtBytes, openSheet, sheetMenu,
   promptDialog, promptPin, confirmDialog, showToast,
   installCardHTML, wireInstallCard, updateThemeColorMeta, canShowInstallCard,
-  wireSwipeRows, hapticTap,
+  wireSwipeRows, hapticTap, makeSortable,
 } from './ui.js';
 import { openFolderEditorSheet, guardCategoryAccess } from './categories.js';
 import { ensureAuthenticated } from './auth.js';
@@ -35,6 +36,26 @@ const THEME_BG_MAP = {
   light:'#F2F2F7', dark:'#131316', amoled:'#000000', cyberpunk:'#0A0414',
   paper:'#F3EBDA', forest:'#0E1812', anime:'#FFF3F8', minimal:'#FAFAFA',
 };
+
+const SORT_MODE_LABELS = {
+  updated_desc: 'Terakhir diubah',
+  updated_asc: 'Terlama diubah',
+  created_desc: 'Baru dibuat',
+  created_asc: 'Lama dibuat',
+  title_asc: 'Judul (A–Z)',
+  title_desc: 'Judul (Z–A)',
+};
+function compareNotesByMode(a, b, mode) {
+  switch (mode) {
+    case 'updated_asc': return new Date(a.updatedAt) - new Date(b.updatedAt);
+    case 'created_desc': return new Date(b.createdAt || b.updatedAt) - new Date(a.createdAt || a.updatedAt);
+    case 'created_asc': return new Date(a.createdAt || a.updatedAt) - new Date(b.createdAt || b.updatedAt);
+    case 'title_asc': return (a.title || '').localeCompare(b.title || '', 'id');
+    case 'title_desc': return (b.title || '').localeCompare(a.title || '', 'id');
+    case 'updated_desc':
+    default: return new Date(b.updatedAt) - new Date(a.updatedAt);
+  }
+}
 
 function noteColorDot(note) {
   return `<span style="width:9px;height:9px;border-radius:50%;background:${note.color || 'var(--accent)'};flex-shrink:0;display:inline-block;margin-top:5px"></span>`;
@@ -59,7 +80,7 @@ function noteRow(note, ctx, context = 'normal') {
     <button class="note-row swipe-content" data-note-id="${note.id}">
       <span class="dot" style="background:${note.color || 'var(--accent)'}"></span>
       <div class="body">
-        <div class="title-line">${note.pinned ? icon('pin', 12) : ''}${locked ? icon('lock', 12) : ''}${note.favorite ? icon('star', 13) : ''}<span class="truncate">${escapeHtml(locked ? (note.title || 'Catatan terkunci') : (note.title || 'Tanpa judul'))}</span></div>
+        <div class="title-line">${note.pinned ? icon('pin', 12) : ''}${locked ? icon('lock', 12) : ''}${note.favorite ? icon('star', 13) : ''}<span class="truncate" style="${locked ? '' : escapeHtml(note.titleStyle || '')}">${escapeHtml(locked ? (note.title || 'Catatan terkunci') : (note.title || 'Tanpa judul'))}</span></div>
         ${snippet ? `<div class="snippet truncate">${escapeHtml(snippet)}</div>` : ''}
         <div class="meta">${fmtRelative(note.updatedAt)}${(note.tags || []).length ? ' · #' + escapeHtml(note.tags[0]) : ''}</div>
       </div>
@@ -68,17 +89,45 @@ function noteRow(note, ctx, context = 'normal') {
     </button>
   </div>`;
 }
+/** Compact grid/"Kotak" tile — the alternative to the classic full-width
+ *  noteRow, shown 2-up via .note-grid (see css). Long-press for the same
+ *  context menu as a row; tap opens the note. No swipe actions here (there
+ *  isn't a natural swipe direction on a 2-column tile), so pin/archive/
+ *  delete are reached through the long-press menu instead. */
+function noteCardTile(note, ctx) {
+  const locked = note._locked || note.locked;
+  const cl = locked ? [] : extractChecklist(note.content);
+  const plainSnippet = locked ? 'Konten tersembunyi' : (note.content || '').replace(/<[^>]+>/g, ' ').trim().slice(0, 140);
+  return `<button class="note-card-tile" data-note-id="${note.id}" style="border-top-color:${note.color || 'var(--accent)'}">
+    ${(note.pinned || locked || note.favorite) ? `<div class="nct-top">${note.pinned ? icon('pin', 12) : ''}${locked ? icon('lock', 12) : ''}${note.favorite ? icon('star', 12) : ''}</div>` : ''}
+    <div class="nct-title truncate2" style="${locked ? '' : escapeHtml(note.titleStyle || '')}">${escapeHtml(locked ? (note.title || 'Catatan terkunci') : (note.title || 'Tanpa judul'))}</div>
+    ${cl.length
+      ? `<div class="nct-checklist">${cl.slice(0, 4).map(c => `<div class="nct-cl-item${c.done ? ' done' : ''}"><span class="cbx-mini${c.done ? ' checked' : ''}"></span><span class="truncate">${escapeHtml(c.text.slice(0, 40))}</span></div>`).join('')}${cl.length > 4 ? `<div class="nct-more">+${cl.length - 4} lainnya</div>` : ''}</div>`
+      : (plainSnippet ? `<div class="nct-snippet">${escapeHtml(plainSnippet)}</div>` : '')}
+    <div class="nct-meta">${fmtRelative(note.updatedAt)}${(note.tags || []).length ? ' · #' + escapeHtml(note.tags[0]) : ''}</div>
+  </button>`;
+}
+
+/** Picks between the classic full-width row list ("Memanjang") and the
+ *  2-column square grid ("Kotak") per the user's "Bentuk Catatan" setting
+ *  — see the Tampilan section of Settings. Used everywhere a plain list of
+ *  notes is shown (Dashboard, Browse, Archive); Trash keeps its own
+ *  dedicated row layout regardless, since restore/purge actions there
+ *  don't translate to a compact tile. */
+function noteListHTML(notes, ctx, shape, context = 'normal') {
+  if (!notes.length) return '';
+  return shape === 'memanjang'
+    ? `<div class="row-list">${notes.map(n => noteRow(n, ctx, context)).join('')}</div>`
+    : `<div class="note-grid">${notes.map(n => noteCardTile(n, ctx, context)).join('')}</div>`;
+}
+
 function wireNoteRows(container, ctx, context = 'normal') {
-  $$('.swipe-content[data-note-id]', container).forEach(el => {
+  $$('[data-note-id]', container).forEach(el => {
+    if (el.classList.contains('swipe-row')) return; // just the outer wrapper — its inner .swipe-content button is the real tap target
     el.onclick = () => ctx.navigate('#/note/' + el.dataset.noteId);
     let pressTimer;
     el.addEventListener('pointerdown', () => { pressTimer = setTimeout(() => openNoteContextMenu(el.dataset.noteId, ctx), 480); });
     ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => el.addEventListener(ev, () => clearTimeout(pressTimer)));
-  });
-  // Non-swipeable note cards elsewhere on the page (e.g. the Favorites carousel)
-  $$('[data-note-id]', container).forEach(el => {
-    if (el.closest('.swipe-row')) return; // already wired above
-    el.onclick = () => ctx.navigate('#/note/' + el.dataset.noteId);
   });
   wireSwipeRows(container, async (noteId, action) => {
     if (!noteId) return;
@@ -113,9 +162,9 @@ async function openNoteContextMenu(noteId, ctx) {
    1. DASHBOARD
    ===================================================================== */
 export async function renderDashboard(container, params, ctx) {
-  const [recentRaw, favs, allNotes, todayRem, stats, streak] = await Promise.all([
+  const [recentRaw, favs, allNotes, todayRem, stats, streak, noteShape] = await Promise.all([
     getRecentNotes(8), getFavoriteNotes(), getActiveNotes(), getTodayReminders(),
-    computeStats(), getStreak(),
+    computeStats(), getStreak(), getSetting('noteShape', 'kotak'),
   ]);
   const pinned = allNotes.filter(n => n.pinned).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
   const recent = recentRaw.filter(n => !n.pinned).slice(0, 6);
@@ -168,7 +217,7 @@ export async function renderDashboard(container, params, ctx) {
       <!-- Pinned -->
       ${pinned.length ? `
       <div class="section-title">${icon('pin',13)} Disematkan</div>
-      <div class="row-list">${pinned.map(n => noteRow(n, ctx)).join('')}</div>` : ''}
+      ${noteListHTML(pinned, ctx, noteShape)}` : ''}
 
       <!-- Favorites -->
       ${favs.length ? `
@@ -177,14 +226,14 @@ export async function renderDashboard(container, params, ctx) {
         ${favs.slice(0,6).map(n => `
           <button data-note-id="${n.id}" class="card card-tap" style="min-width:160px;max-width:180px;flex-shrink:0;text-align:left">
             <div style="font-size:18px;margin-bottom:6px">${n.color ? '🔖' : '⭐'}</div>
-            <div style="font-weight:700;font-size:14px;margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(n.title || 'Tanpa judul')}</div>
+            <div style="font-weight:700;font-size:14px;margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${n.titleStyle || ''}">${escapeHtml(n.title || 'Tanpa judul')}</div>
             <div style="color:var(--text-tertiary);font-size:11px">${fmtRelative(n.updatedAt)}</div>
           </button>`).join('')}
       </div>` : ''}
 
       <!-- Recently edited -->
       <div class="section-title">Terakhir Diedit</div>
-      ${recent.length ? `<div class="row-list">${recent.map(n => noteRow(n, ctx)).join('')}</div>`
+      ${recent.length ? noteListHTML(recent, ctx, noteShape)
         : (pinned.length ? '' : `<div class="empty-state"><div class="e-icon">📝</div><div class="e-title">Belum ada catatan</div><p>Ketuk tombol + untuk membuat catatan pertama kamu!</p></div>`)}
 
     </div>
@@ -202,7 +251,7 @@ export async function renderDashboard(container, params, ctx) {
    2. BROWSE (folders + notes list)
    ===================================================================== */
 export async function renderBrowse(container, params, ctx) {
-  const [allFolders, allNotes] = await Promise.all([getAllFolders(), getActiveNotes()]);
+  const [allFolders, allNotes, noteShape, sortMode] = await Promise.all([getAllFolders(), getActiveNotes(), getSetting('noteShape', 'kotak'), getSetting('browseSortMode', 'updated_desc')]);
   const folderId = params.folderId || null;
   const folder = folderId ? allFolders.find(f => f.id === folderId) : null;
 
@@ -213,7 +262,7 @@ export async function renderBrowse(container, params, ctx) {
 
   const notes = folderId ? allNotes.filter(n => n.folderId === folderId) : allNotes.filter(n => !n.folderId);
   const childFolders = allFolders.filter(f => f.parentId === folderId);
-  const sorted = [...notes].sort((a, b) => (b.pinned === a.pinned ? 0 : b.pinned ? 1 : -1) || new Date(b.updatedAt) - new Date(a.updatedAt));
+  const sorted = [...notes].sort((a, b) => (b.pinned === a.pinned ? 0 : b.pinned ? 1 : -1) || compareNotesByMode(a, b, sortMode));
 
   const noteCountOf = (fid) => {
     const count = allNotes.filter(n => n.folderId === fid).length;
@@ -227,7 +276,7 @@ export async function renderBrowse(container, params, ctx) {
       <span class="tb-title">${folder ? escapeHtml(folder.name) : 'Semua Catatan'}</span>
       <button class="icon-btn plain" id="btnManageCategories" aria-label="Kelola Kategori">${icon('category', 19)}</button>
       <button class="icon-btn plain" id="btnNewFolder">${icon('folderPlus', 20)}</button>
-      <button class="icon-btn plain" id="btnSortMenu">${icon('shuffle', 20)}</button>
+      <button class="icon-btn plain" id="btnSortMenu" aria-label="Urutkan catatan">${icon('shuffle', 20)}</button>
     </div>
     <main style="flex:1;overflow-y:auto;padding-bottom:calc(86px + var(--safe-b))">
     <div class="view-pad stagger">
@@ -247,7 +296,7 @@ export async function renderBrowse(container, params, ctx) {
 
       ${sorted.length ? `
       <div class="section-title" style="${childFolders.length ? '' : 'margin-top:0'}">Catatan</div>
-      <div class="row-list">${sorted.map(n => noteRow(n, ctx)).join('')}</div>`
+      ${noteListHTML(sorted, ctx, noteShape)}`
       : `<div class="empty-state" style="margin-top:${childFolders.length ? '20px' : '60px'}">
           <div class="e-icon">📂</div>
           <div class="e-title">${folderId ? 'Kategori ini kosong' : 'Tanpa Kategori kosong'}</div>
@@ -261,7 +310,15 @@ export async function renderBrowse(container, params, ctx) {
   if (btnBrowseBack) btnBrowseBack.onclick = () => ctx.back();
   $('#btnManageCategories', container).onclick = () => ctx.navigate('#/categories');
   $('#btnNewFolder', container).onclick = () => openFolderEditorSheet(null, folderId, ctx);
-  $('#btnSortMenu', container).onclick = () => {}; // future: sort options sheet
+  $('#btnSortMenu', container).onclick = async () => {
+    const choice = await sheetMenu(
+      Object.entries(SORT_MODE_LABELS).map(([value, label]) => ({
+        value, label, icon: value === sortMode ? 'check' : undefined,
+      })),
+      { title: 'Urutkan berdasarkan' }
+    );
+    if (choice && choice !== sortMode) { await setSetting('browseSortMode', choice); ctx.rerender(); }
+  };
 
   $$('[data-folder]', container).forEach(btn => {
     btn.onclick = async () => {
@@ -292,7 +349,7 @@ export async function renderBrowse(container, params, ctx) {
    2b. ARCHIVE
    ===================================================================== */
 export async function renderArchive(container, params, ctx) {
-  const notes = await getArchivedNotes();
+  const [notes, noteShape] = await Promise.all([getArchivedNotes(), getSetting('noteShape', 'kotak')]);
   container.innerHTML = `
     <div class="topbar">
       <button class="icon-btn plain" id="btnArchiveBack">${icon('chevronLeft', 22)}</button>
@@ -301,7 +358,7 @@ export async function renderArchive(container, params, ctx) {
     </div>
     <main style="flex:1;overflow-y:auto;padding-bottom:calc(86px + var(--safe-b))">
     <div class="view-pad stagger">
-      ${notes.length ? `<div class="row-list">${notes.map(n => noteRow(n, ctx, 'archive')).join('')}</div>` : `
+      ${notes.length ? noteListHTML(notes, ctx, noteShape, 'archive') : `
       <div class="empty-state" style="margin-top:70px">
         <div class="e-icon">🗄️</div>
         <div class="e-title">Arsip kosong</div>
@@ -438,7 +495,7 @@ export async function renderSearch(container, params, ctx) {
    4. GRAPH VIEW (2D force-directed + optional 3D toggle)
    ===================================================================== */
 export async function renderGraph(container, params, ctx) {
-  const [allNotes, allFolders] = await Promise.all([getAllNotes(), getAllFolders()]);
+  const [allNotes, allFolders] = await Promise.all([getActiveNotes(), getAllFolders()]);
   const is3D = params.mode === '3d';
 
   container.innerHTML = `
@@ -477,6 +534,17 @@ export async function renderGraph(container, params, ctx) {
 }
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+/* ---- Small hex-color helpers used only for shading the 3-D graph's sphere nodes ---- */
+function hexToRgb(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
+  if (!m) return { r: 125, g: 122, b: 255 }; // sane fallback ~= accent purple
+  const n = parseInt(m[1], 16);
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+}
+function rgbaStr({ r, g, b }, a) { return `rgba(${r},${g},${b},${a})`; }
+function mixWithWhite({ r, g, b }, t) { return { r: r + (255 - r) * t, g: g + (255 - g) * t, b: b + (255 - b) * t }; }
+function mixWithBlack({ r, g, b }, t) { return { r: r * (1 - t), g: g * (1 - t), b: b * (1 - t) }; }
 
 function graphEmptyStateHTML() {
   return `<div class="empty-state" style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none">
@@ -579,13 +647,38 @@ function runGraph2D(canvas, notes, ctx) {
      graph can never again render with every node sitting off-canvas. */
   function targetFit() {
     const { minX, minY, maxX, maxY } = bounds();
-    const bw = Math.max(maxX - minX, 1), bh = Math.max(maxY - minY, 1);
+    // Floored at 260 world-px per axis: with just one or two notes (or any
+    // tightly-clustered handful), minX≈maxX and minY≈maxY, so the raw span
+    // collapses toward 0. Feeding a near-zero span into the fit formula
+    // below made it divide by almost nothing and demand a huge zoom to
+    // "fill" that span — which is exactly why a single-note graph opened
+    // zoomed in to MAX_ZOOM, with the one node filling most of the screen.
+    // Flooring the span keeps the fit sane no matter how few nodes there are.
+    const bw = Math.max(maxX - minX, 260), bh = Math.max(maxY - minY, 260);
     const pad = 64;
     const tz = clamp(Math.min((canvas.width - pad * 2) / bw, (canvas.height - pad * 2) / bh), MIN_ZOOM, MAX_ZOOM);
     const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
     return { zoom: tz, panX: canvas.width / 2 - cx * tz, panY: canvas.height / 2 - cy * tz };
   }
   { const f = targetFit(); zoom = f.zoom; panX = f.panX; panY = f.panY; } // frame correctly on the very first paint, before simulation even starts
+
+  // Restore the zoom level the user last set for the 2-D graph (if any),
+  // recentered for this session's layout, instead of always re-running
+  // auto-fit — auto-fit is only what drives the *very first* open.
+  const ZOOM_STORE_KEY_2D = 'catat:graphZoom2D';
+  function persistZoom2D() { try { localStorage.setItem(ZOOM_STORE_KEY_2D, String(zoom)); } catch {} }
+  {
+    let storedZoom = null;
+    try { storedZoom = parseFloat(localStorage.getItem(ZOOM_STORE_KEY_2D)); } catch {}
+    if (Number.isFinite(storedZoom)) {
+      const { minX, minY, maxX, maxY } = bounds();
+      const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+      zoom = clamp(storedZoom, MIN_ZOOM, MAX_ZOOM);
+      panX = canvas.width / 2 - cx * zoom;
+      panY = canvas.height / 2 - cy * zoom;
+      userInteracted = true;
+    }
+  }
 
   function draw() {
     const cw = canvas.offsetWidth, ch = canvas.offsetHeight;
@@ -660,11 +753,12 @@ function runGraph2D(canvas, notes, ctx) {
     userInteracted = true;
     const factor = e.deltaY < 0 ? 1.1 : 0.91;
     zoom = clamp(zoom * factor, MIN_ZOOM, MAX_ZOOM);
+    persistZoom2D();
   }, { passive: false });
 
-  $('#gZoomIn', wrap).onclick = () => { userInteracted = true; zoom = clamp(zoom * 1.2, MIN_ZOOM, MAX_ZOOM); };
-  $('#gZoomOut', wrap).onclick = () => { userInteracted = true; zoom = clamp(zoom * 0.83, MIN_ZOOM, MAX_ZOOM); };
-  $('#gCenter', wrap).onclick = () => { userInteracted = false; const f = targetFit(); zoom = f.zoom; panX = f.panX; panY = f.panY; };
+  $('#gZoomIn', wrap).onclick = () => { userInteracted = true; zoom = clamp(zoom * 1.2, MIN_ZOOM, MAX_ZOOM); persistZoom2D(); };
+  $('#gZoomOut', wrap).onclick = () => { userInteracted = true; zoom = clamp(zoom * 0.83, MIN_ZOOM, MAX_ZOOM); persistZoom2D(); };
+  $('#gCenter', wrap).onclick = () => { userInteracted = false; try { localStorage.removeItem(ZOOM_STORE_KEY_2D); } catch {} const f = targetFit(); zoom = f.zoom; panX = f.panX; panY = f.panY; };
 
   const onGraphSearch = (e) => { highlighted = e.detail; };
   document.addEventListener('graph:search', onGraphSearch);
@@ -765,9 +859,27 @@ function runGraph3D(canvas, notes, ctx) {
   function targetCamDist() {
     let maxR = 10;
     nodes.forEach(n => { maxR = Math.max(maxR, Math.hypot(n.x, n.y, n.z)); });
+    // Same reasoning as the 2-D graph's fit floor: with very few nodes,
+    // maxR alone can under-represent how much "room" a single sphere plus
+    // its label actually needs on screen, which is what made the 3-D graph
+    // look oversized right out of the gate for small note collections.
+    maxR = Math.max(maxR, 90);
     return clamp(maxR * 2.15 + 70, MIN_DIST, MAX_DIST);
   }
   camDist = targetCamDist(); // frame correctly on the very first paint
+
+  // Restore the camera distance ("zoom") the user last set for the 3-D
+  // graph, instead of always re-deriving it from the current layout.
+  const DIST_STORE_KEY_3D = 'catat:graphDist3D';
+  function persistDist3D() { try { localStorage.setItem(DIST_STORE_KEY_3D, String(camDist)); } catch {} }
+  {
+    let storedDist = null;
+    try { storedDist = parseFloat(localStorage.getItem(DIST_STORE_KEY_3D)); } catch {}
+    if (Number.isFinite(storedDist)) {
+      camDist = clamp(storedDist, MIN_DIST, MAX_DIST);
+      userInteracted = true;
+    }
+  }
 
   function project(x, y, z) {
     const cosY = Math.cos(rotY), sinY = Math.sin(rotY);
@@ -839,9 +951,33 @@ function runGraph3D(canvas, notes, ctx) {
     sorted.forEach(({ n, p }) => {
       const fog = clamp(p.scale / baseScale, 0.32, 1);
       const r = 7 * p.scale;
+      const base = hexToRgb(n.color || accent);
       C.globalAlpha = fog;
-      C.beginPath(); C.arc(p.sx, p.sy, r, 0, Math.PI * 2);
-      C.fillStyle = n.color || accent; C.fill();
+
+      // Soft outer glow — reads as an ambient light halo around the sphere,
+      // rather than the previous plain flat-filled dot with a hard edge.
+      const glowR = r * 2.4;
+      const glow = C.createRadialGradient(p.sx, p.sy, r * 0.75, p.sx, p.sy, glowR);
+      glow.addColorStop(0, rgbaStr(base, 0.35));
+      glow.addColorStop(1, rgbaStr(base, 0));
+      C.beginPath(); C.arc(p.sx, p.sy, glowR, 0, Math.PI * 2); C.fillStyle = glow; C.fill();
+
+      // Sphere body: a radial gradient with its hotspot offset up-and-left
+      // of center (a fixed key-light direction) is what actually reads as
+      // a lit 3-D ball on a 2-D canvas — a single flat fillStyle can only
+      // ever look like a flat disc no matter how correct the orbit math is.
+      const lightX = p.sx - r * 0.35, lightY = p.sy - r * 0.35;
+      const body = C.createRadialGradient(lightX, lightY, r * 0.05, p.sx, p.sy, r * 1.05);
+      body.addColorStop(0, rgbaStr(mixWithWhite(base, 0.7), 1));
+      body.addColorStop(0.45, rgbaStr(base, 1));
+      body.addColorStop(1, rgbaStr(mixWithBlack(base, 0.45), 1));
+      C.beginPath(); C.arc(p.sx, p.sy, r, 0, Math.PI * 2); C.fillStyle = body; C.fill();
+
+      // Small crisp specular highlight — the finishing touch that sells
+      // "glossy sphere" rather than "shaded circle".
+      C.beginPath(); C.arc(lightX + r * 0.05, lightY + r * 0.05, Math.max(1, r * 0.22), 0, Math.PI * 2);
+      C.fillStyle = 'rgba(255,255,255,.55)'; C.fill();
+
       if (p.scale > baseScale * 0.8) {
         C.font = `${Math.round(11 * p.scale)}px -apple-system,sans-serif`;
         C.fillStyle = textColor;
@@ -884,22 +1020,123 @@ function runGraph3D(canvas, notes, ctx) {
     e.preventDefault();
     userInteracted = true;
     camDist = clamp(camDist * (e.deltaY < 0 ? 0.9 : 1.1), MIN_DIST, MAX_DIST);
+    persistDist3D();
   }, { passive: false });
 
-  $('#gZoomIn', wrap).onclick = () => { userInteracted = true; camDist = clamp(camDist * 0.82, MIN_DIST, MAX_DIST); };
-  $('#gZoomOut', wrap).onclick = () => { userInteracted = true; camDist = clamp(camDist * 1.22, MIN_DIST, MAX_DIST); };
-  $('#gCenter', wrap).onclick = () => { userInteracted = false; rotY = DEFAULT_ROT_Y; rotX = DEFAULT_ROT_X; camDist = targetCamDist(); };
+  $('#gZoomIn', wrap).onclick = () => { userInteracted = true; camDist = clamp(camDist * 0.82, MIN_DIST, MAX_DIST); persistDist3D(); };
+  $('#gZoomOut', wrap).onclick = () => { userInteracted = true; camDist = clamp(camDist * 1.22, MIN_DIST, MAX_DIST); persistDist3D(); };
+  $('#gCenter', wrap).onclick = () => { userInteracted = false; try { localStorage.removeItem(DIST_STORE_KEY_3D); } catch {} rotY = DEFAULT_ROT_Y; rotX = DEFAULT_ROT_X; camDist = targetCamDist(); };
 
   return () => cancelAnimationFrame(raf);
+}
+
+/* =====================================================================
+   4b. TEMPLATE MANAGER ("Kelola Template Cepat") — same add/edit/reorder/
+   delete pattern as Kelola Kategori (categories.js), for the Quick
+   Templates grid shown in Settings.
+   ===================================================================== */
+function templateRowHTML(t) {
+  return `<div class="cat-mgr-row" data-id="${t.id}">
+    <span class="cat-mgr-handle" contenteditable="false">${icon('grip', 15)}</span>
+    <span class="cat-mgr-ic" style="background:var(--accent-soft)">${escapeHtml(t.icon || '📄')}</span>
+    <span class="cat-mgr-name">${escapeHtml(t.label)}</span>
+    <button class="icon-btn plain cat-mgr-menu" data-menu="${t.id}" aria-label="Menu template">${icon('moreVert', 18)}</button>
+  </div>`;
+}
+
+function openTemplateEditorSheet(tpl, ctx) {
+  const isNew = !tpl;
+  const html = `
+    <div class="fp-header">
+      <span class="fp-header-title">${isNew ? 'Template Baru' : 'Edit Template'}</span>
+      <button class="icon-btn plain" id="tplCloseBtn" aria-label="Tutup">${icon('close', 20)}</button>
+    </div>
+    <div class="field-label">Ikon (emoji)</div>
+    <input class="field" id="tplIcon" maxlength="4" value="${escapeHtml(tpl?.icon || '📄')}" style="width:70px;text-align:center;font-size:20px;margin-bottom:12px">
+    <div class="field-label">Nama Template</div>
+    <input class="field" id="tplLabel" placeholder="mis. Rencana Belanja" value="${escapeHtml(tpl?.label || '')}" style="margin-bottom:12px">
+    <div class="field-label">Isi Template (HTML)</div>
+    <textarea class="field" id="tplContent" rows="8" placeholder="<h2>Judul</h2><p>...</p>" style="font-family:var(--font-mono);font-size:13px;line-height:1.5">${escapeHtml(tpl?.content || '')}</textarea>
+    <p class="muted" style="font-size:12px;margin:6px 0 16px">Bisa pakai tag HTML dasar: &lt;h2&gt;, &lt;h3&gt;, &lt;p&gt;, &lt;ul&gt;/&lt;li&gt;, &lt;ol&gt;/&lt;li&gt;, &lt;hr&gt;.</p>
+    <div class="modal-actions">
+      <button class="btn btn-soft btn-block" id="tplCancelBtn">Batal</button>
+      <button class="btn btn-primary btn-block" id="tplSaveBtn">Simpan</button>
+    </div>`;
+  const { el, close } = openSheet(html);
+  $('#tplCloseBtn', el).onclick = () => close();
+  $('#tplCancelBtn', el).onclick = () => close();
+  $('#tplSaveBtn', el).onclick = async () => {
+    const iconVal = $('#tplIcon', el).value.trim() || '📄';
+    const label = $('#tplLabel', el).value.trim();
+    const content = $('#tplContent', el).value;
+    if (!label) { showToast('Nama template wajib diisi'); return; }
+    if (isNew) await addTemplate({ icon: iconVal, label, content });
+    else await updateTemplate(tpl.id, { icon: iconVal, label, content });
+    close();
+    ctx.rerender();
+  };
+}
+
+export async function renderTemplateManager(container, params, ctx) {
+  const templates = await getTemplates();
+  container.innerHTML = `
+    <div class="topbar">
+      <button class="icon-btn plain" id="btnTplBack">${icon('chevronLeft', 22)}</button>
+      <span class="tb-title">Kelola Template Cepat</span>
+      <span style="width:40px"></span>
+    </div>
+    <main style="flex:1;overflow-y:auto;padding-bottom:calc(110px + var(--safe-b))">
+    <div class="view-pad stagger">
+      <div class="cat-manager-card" id="tplList">
+        ${templates.length ? templates.map(templateRowHTML).join('') : `
+          <div class="empty-state" style="padding:28px 12px">
+            <div class="e-icon">📄</div>
+            <div class="e-title">Belum ada template</div>
+            <p>Ketuk "Tambah Template" di bawah</p>
+          </div>`}
+      </div>
+    </div>
+    </main>
+    <div class="cat-mgr-footer">
+      <button class="btn btn-primary btn-block" id="btnAddTemplate">${icon('plus', 18)}<span>Tambah Template</span></button>
+    </div>`;
+
+  $('#btnTplBack', container).onclick = () => ctx.back();
+  $('#btnAddTemplate', container).onclick = () => openTemplateEditorSheet(null, ctx);
+
+  const listEl = $('#tplList', container);
+  if (templates.length) {
+    makeSortable(listEl, {
+      handleSelector: '.cat-mgr-handle',
+      itemSelector: '.cat-mgr-row[data-id]',
+      onReorder: async (items) => { await reorderTemplates(items.map(it => it.dataset.id)); },
+    });
+  }
+
+  $$('[data-menu]', container).forEach(btn => btn.onclick = async (e) => {
+    e.stopPropagation();
+    const id = btn.dataset.menu;
+    const t = templates.find(x => x.id === id);
+    if (!t) return;
+    const choice = await sheetMenu([
+      { value: 'edit', icon: 'pencil', label: 'Edit template' },
+      { value: 'delete', icon: 'trash', label: 'Hapus template', danger: true },
+    ], { title: t.label });
+    if (choice === 'edit') openTemplateEditorSheet(t, ctx);
+    if (choice === 'delete') {
+      const ok = await confirmDialog(`Template "${t.label}" akan dihapus.`, { title: 'Hapus template?', okLabel: 'Hapus', danger: true });
+      if (ok) { await deleteTemplate(id); ctx.rerender(); showToast('Template dihapus', { icon: 'trash' }); }
+    }
+  });
 }
 
 /* =====================================================================
    5. SETTINGS
    ===================================================================== */
 export async function renderSettings(container, params, ctx) {
-  const [currentTheme, lockCfg, streak, stats, archived, trashed] = await Promise.all([
+  const [currentTheme, lockCfg, streak, stats, archived, trashed, noteShape, templates] = await Promise.all([
     getSetting('theme', 'dark'), getSetting('lock'), getStreak(), computeStats(),
-    getArchivedNotes(), getTrashedNotes(),
+    getArchivedNotes(), getTrashedNotes(), getSetting('noteShape', 'kotak'), getTemplates(),
   ]);
   const badges = await getBadges({ ...stats, streak });
   const webAuthnOk = await isWebAuthnAvailable();
@@ -937,12 +1174,30 @@ export async function renderSettings(container, params, ctx) {
           </button>`).join('')}
       </div>
 
+      <!-- Note shape -->
+      <div class="section-title">Bentuk Catatan</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:var(--space-5)">
+        <button class="template-card" data-shape="kotak" style="${noteShape !== 'memanjang' ? 'border-color:var(--accent)' : ''}">
+          <div class="t-icon">${icon('browse', 20)}</div>
+          <b>Kotak</b>
+        </button>
+        <button class="template-card" data-shape="memanjang" style="${noteShape === 'memanjang' ? 'border-color:var(--accent)' : ''}">
+          <div class="t-icon">${icon('listBullet', 20)}</div>
+          <b>Memanjang</b>
+        </button>
+      </div>
+
       <!-- Organization -->
       <div class="section-title">Organisasi</div>
       <div class="settings-group">
         <div class="settings-row" id="btnGotoCategories">
           <span class="si" style="background:#5E5CE6">${icon('category', 16)}</span>
           <div class="stext"><b>Kelola Kategori</b><span>Urutkan, kunci, ganti nama & warna</span></div>
+          ${icon('chevronRight', 18)}
+        </div>
+        <div class="settings-row" id="btnGotoTemplates">
+          <span class="si" style="background:#32ADE6">${icon('templates', 16)}</span>
+          <div class="stext"><b>Kelola Template Cepat</b><span>Tambah, edit, urutkan template</span></div>
           ${icon('chevronRight', 18)}
         </div>
         <div class="settings-row" id="btnGotoArchive">
@@ -1001,16 +1256,13 @@ export async function renderSettings(container, params, ctx) {
       </div>
 
       <!-- Templates -->
-      <div class="section-title">Template Cepat</div>
+      <div class="section-title" style="display:flex;align-items:center;justify-content:space-between">
+        <span>Template Cepat</span>
+        <button class="icon-btn plain" id="btnGotoTemplatesInline" aria-label="Kelola Template Cepat">${icon('pencil', 15)}</button>
+      </div>
       <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:var(--space-5)">
-        ${[
-          { icon: '📝', label: 'Jurnal Harian', content: '<h2>Jurnal — ' + new Date().toLocaleDateString('id-ID') + '</h2><p>Hari ini aku...</p><h3>Syukur</h3><ul><li>...</li></ul><h3>Hal yang perlu diperbaiki</h3><ul><li>...</li></ul>' },
-          { icon: '🧪', label: 'Laporan Praktikum', content: '<h2>Laporan Praktikum</h2><h3>Tujuan</h3><p>...</p><h3>Alat & Bahan</h3><ul><li>...</li></ul><h3>Langkah Kerja</h3><ol><li>...</li></ol><h3>Hasil & Pembahasan</h3><p>...</p><h3>Kesimpulan</h3><p>...</p>' },
-          { icon: '🎮', label: 'Ide Game', content: '<h2>Konsep Game</h2><h3>Genre</h3><p>...</p><h3>Cerita Singkat</h3><p>...</p><h3>Mekanik Utama</h3><ul><li>...</li></ul><h3>Referensi</h3><p>...</p>' },
-          { icon: '📅', label: 'Planner Proyek', content: '<h2>Proyek: ...</h2><h3>Tujuan</h3><p>...</p><h3>Tugas</h3>' + ['Riset', 'Desain', 'Implementasi', 'Review'].map(t => `<div class="checklist-item" data-checked="false"><span class="cbx"></span><span class="ctext">${t}</span></div>`).join('') + '<h3>Catatan</h3><p>...</p>' },
-          { icon: '📖', label: 'Bab Novel', content: '<h2>Bab — </h2><h3>Ringkasan</h3><p>...</p><hr><p>Paragraf pembuka...</p>' },
-          { icon: '🔬', label: 'Catatan Riset', content: '<h2>Riset: ...</h2><h3>Pertanyaan Utama</h3><p>...</p><h3>Sumber</h3><ul><li>...</li></ul><h3>Temuan</h3><p>...</p><h3>Kesimpulan Sementara</h3><p>...</p>' },
-        ].map(t => `<button class="template-card" data-tpl='${JSON.stringify(t)}'><div class="t-icon">${t.icon}</div><b>${t.label}</b></button>`).join('')}
+        ${templates.length ? templates.map(t => `<button class="template-card" data-tpl-id="${t.id}"><div class="t-icon">${escapeHtml(t.icon || '📄')}</div><b>${escapeHtml(t.label)}</b></button>`).join('')
+          : `<p class="muted" style="grid-column:1/-1;font-size:13px">Belum ada template. Ketuk ikon pensil untuk menambah.</p>`}
       </div>
 
       <!-- App info + install banner at bottom -->
@@ -1030,7 +1282,15 @@ export async function renderSettings(container, params, ctx) {
     ctx.rerender();
   });
 
+  // Note shape (Bentuk Catatan)
+  $$('[data-shape]', container).forEach(btn => btn.onclick = async () => {
+    await setSetting('noteShape', btn.dataset.shape);
+    ctx.rerender();
+  });
+
   $('#btnGotoCategories', container).onclick = () => ctx.navigate('#/categories');
+  $('#btnGotoTemplates', container).onclick = () => ctx.navigate('#/templates');
+  $('#btnGotoTemplatesInline', container).onclick = () => ctx.navigate('#/templates');
   $('#btnGotoArchive', container).onclick = () => ctx.navigate('#/archive');
   $('#btnGotoTrash', container).onclick = () => ctx.navigate('#/trash');
 
@@ -1091,8 +1351,9 @@ export async function renderSettings(container, params, ctx) {
   };
 
   // Templates
-  $$('[data-tpl]', container).forEach(btn => btn.onclick = async () => {
-    const tpl = JSON.parse(btn.dataset.tpl);
+  $$('[data-tpl-id]', container).forEach(btn => btn.onclick = async () => {
+    const tpl = templates.find(t => t.id === btn.dataset.tplId);
+    if (!tpl) return;
     const note = await createNote({ title: tpl.label, content: tpl.content });
     ctx.navigate('#/note/' + note.id);
   });

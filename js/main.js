@@ -10,6 +10,7 @@ import { $, $$, icon, escapeHtml, openSheet, showToast, updateThemeColorMeta, is
 import {
   renderDashboard, renderBrowse, renderSearch,
   renderGraph, renderSettings, renderReader, renderArchive, renderTrash,
+  renderTemplateManager,
 } from './views.js';
 import { renderNoteView } from './editor.js';
 import { renderCategoryManager } from './categories.js';
@@ -91,6 +92,8 @@ async function render({ route, params }) {
       await renderSettings(viewEl, params, ctx); break;
     case 'categories':
       await renderCategoryManager(viewEl, params, ctx); break;
+    case 'templates':
+      await renderTemplateManager(viewEl, params, ctx); break;
     case 'archive':
       await renderArchive(viewEl, params, ctx); break;
     case 'trash':

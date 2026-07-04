@@ -21,7 +21,7 @@ import {
 import { pickFiles, openVoiceRecorder, openScanFlow, openDrawCanvas, openAttachMenu, attachmentPreviewHTML } from './attachments.js';
 import { createHistory } from './history.js';
 import { migrateLegacyChecklist, toggleListType, renumberLists, refreshAddItemAffordance, wireListEvents } from './richlist.js';
-import { openFontPanel } from './fontpanel.js';
+import { openFontPanel, openFontPanelForElement } from './fontpanel.js';
 import { createVerticalToolbar } from './vtoolbar.js';
 import { openShareSheet, openQuickLink, openReadAloudSheet, stopSpeaking, parseBlocks } from './share.js';
 import { openCategoryPicker, guardCategoryAccess } from './categories.js';
@@ -617,7 +617,7 @@ export async function renderNoteView(container, { id }, ctx) {
     <main id="noteScroll" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;position:relative">
       <span class="save-indicator" id="saveIndicator"></span>
       <div class="view-pad view-enter">
-        <input class="note-title-input" id="titleInput" placeholder="Judul catatan" value="${escapeHtml(note.title)}">
+        <input class="note-title-input" id="titleInput" placeholder="Judul catatan" value="${escapeHtml(note.title)}" style="${escapeHtml(note.titleStyle || '')}">
         <div class="chip-row" style="margin-bottom:14px">
           ${note.pinned ? `<span class="tag tag-static">${icon('pin', 12)} Disematkan</span>` : ''}
           ${(note.tags || []).map(t => `<span class="tag">#${escapeHtml(t)}</span>`).join('')}
@@ -686,15 +686,17 @@ export async function renderNoteView(container, { id }, ctx) {
   const saveToDb = debounce(async () => {
     const title = titleInput.value || '';
     const content = getCleanContentHTML(contentEl);
-    note = await updateNote(note.id, { title, content });
+    const titleStyle = titleInput.getAttribute('style') || '';
+    note = await updateNote(note.id, { title, content, titleStyle });
     if (Date.now() - lastVersionAt > 120000) { lastVersionAt = Date.now(); saveVersion(note.id, title, content).catch(() => {}); }
     showSaved();
   }, 650);
 
   const history = createHistory({
-    getState: () => ({ title: titleInput.value, html: contentEl.innerHTML }),
+    getState: () => ({ title: titleInput.value, html: contentEl.innerHTML, titleStyle: titleInput.getAttribute('style') || '' }),
     applyState: (state) => {
       titleInput.value = state.title;
+      titleInput.setAttribute('style', state.titleStyle || '');
       contentEl.innerHTML = state.html;
       hydrateAttachments(contentEl);
       renderMath(contentEl);
@@ -725,6 +727,17 @@ export async function renderNoteView(container, { id }, ctx) {
   }
 
   titleInput.addEventListener('input', (e) => commit(e.inputType !== 'insertText'));
+
+  // Which editable last had focus — the vtoolbar's "font" button needs to
+  // know whether to style the whole title (a plain <input>, so it can only
+  // ever have one uniform style) or wrap the current selection inside the
+  // rich-text body. Tracked via focus events rather than checking
+  // document.activeElement when the button is tapped, since tapping the
+  // toolbar itself blurs whichever field was focused before the click
+  // handler even runs.
+  let lastFocusTarget = 'content';
+  titleInput.addEventListener('focus', () => { lastFocusTarget = 'title'; });
+  contentEl.addEventListener('focus', () => { lastFocusTarget = 'content'; });
   contentEl.addEventListener('input', (e) => {
     if (e.inputType === 'insertText' && e.data === ']') convertWikiNearCaret(contentEl);
     const isPlainTyping = e.inputType === 'insertText' || e.inputType === 'insertCompositionText';
@@ -836,7 +849,10 @@ export async function renderNoteView(container, { id }, ctx) {
     primary: VTB_PRIMARY,
     secondary: VTB_SECONDARY,
     onAction: async (cmd) => {
-      if (cmd === 'font') { restoreSelection(contentEl); openFontPanel(contentEl, _savedRange, commit); return; }
+      if (cmd === 'font') {
+        if (lastFocusTarget === 'title') { openFontPanelForElement(titleInput, () => commit(true)); return; }
+        restoreSelection(contentEl); openFontPanel(contentEl, _savedRange, commit); return;
+      }
       if (cmd === 'checklist') { restoreSelection(contentEl); toggleListType(contentEl, 'checklist'); commit(true); return; }
       if (cmd === 'bulletlist') { restoreSelection(contentEl); toggleListType(contentEl, 'bullet'); commit(true); return; }
       if (cmd === 'numberlist') { restoreSelection(contentEl); toggleListType(contentEl, 'number'); commit(true); return; }

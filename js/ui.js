@@ -140,7 +140,39 @@ export function showToast(message, opts = {}) {
   setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 280); }, opts.duration || 2200);
 }
 
-/* ---------------- Bottom sheet ---------------- */
+/* ---------------- Back-button/gesture dismiss for overlays ----------------
+ * Sheets, modals, and anything else stacked on top of the app are plain
+ * elements appended straight to <body> — the hash router (main.js) has no
+ * idea they exist. Without this, pressing the device's back button/gesture
+ * only ever drives the router underneath: the router happily navigates (or
+ * re-renders) the page behind the scenes, but the overlay itself has no
+ * listener telling it to close, so it's left stuck on screen over whatever
+ * the router just switched to — on any page — until the user finds and
+ * taps its own close affordance.
+ *
+ * Fix: every overlay pushes one throwaway history entry when it opens, and
+ * closes itself the moment that entry is popped (back button/gesture).
+ * Closing it any other way (tapping "Selesai", the backdrop, Cancel, etc.)
+ * consumes that same entry via history.back() so the *next* real back
+ * press goes straight to the previous page instead of being wasted on an
+ * already-closed overlay. */
+function withBackDismiss(rawClose) {
+  let closed = false;
+  let poppedByBack = false;
+  window.history.pushState({ __overlay: true }, '');
+  const onPopState = () => { poppedByBack = true; guardedClose(); };
+  window.addEventListener('popstate', onPopState);
+  function guardedClose() {
+    if (closed) return;
+    closed = true;
+    window.removeEventListener('popstate', onPopState);
+    rawClose();
+    if (!poppedByBack) window.history.back();
+  }
+  return guardedClose;
+}
+
+
 export function openSheet(innerHTML, { title = '', onClose } = {}) {
   const backdrop = document.createElement('div');
   backdrop.className = 'sheet-backdrop';
@@ -151,14 +183,15 @@ export function openSheet(innerHTML, { title = '', onClose } = {}) {
   </div>`;
   document.body.appendChild(backdrop);
   requestAnimationFrame(() => backdrop.classList.add('show'));
-  let closed = false;
-  const close = () => {
-    if (closed) return;
-    closed = true;
+  let rawClosed = false;
+  const rawClose = () => {
+    if (rawClosed) return;
+    rawClosed = true;
     backdrop.classList.remove('show');
     setTimeout(() => backdrop.remove(), 320);
     onClose?.();
   };
+  const close = withBackDismiss(rawClose);
   backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(); });
   return { el: backdrop, close };
 }
@@ -179,7 +212,15 @@ export function openModal(innerHTML) {
   backdrop.innerHTML = `<div class="modal">${innerHTML}</div>`;
   document.body.appendChild(backdrop);
   requestAnimationFrame(() => backdrop.classList.add('show'));
-  const close = () => { backdrop.classList.remove('show'); setTimeout(() => backdrop.remove(), 240); };
+  let rawClosed = false;
+  const rawClose = () => {
+    if (rawClosed) return;
+    rawClosed = true;
+    backdrop.classList.remove('show');
+    setTimeout(() => backdrop.remove(), 240);
+  };
+  const close = withBackDismiss(rawClose);
+  backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(); });
   return { el: backdrop, close };
 }
 
