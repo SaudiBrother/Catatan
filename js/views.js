@@ -1267,7 +1267,7 @@ export async function renderSettings(container, params, ctx) {
 
       <!-- App info + install banner at bottom -->
       <div id="installCardSlot">${installCardHTML()}</div>
-      <p style="text-align:center;color:var(--text-tertiary);font-size:12px;margin-top:16px">Catat v2.1.1 · Semua data tersimpan di perangkat kamu · Tidak perlu internet</p>
+      <p style="text-align:center;color:var(--text-tertiary);font-size:12px;margin-top:16px">Catat v2.1.6 · Semua data tersimpan di perangkat kamu · Tidak perlu internet</p>
     </div>
     </main>`;
 

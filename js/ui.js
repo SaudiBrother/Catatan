@@ -360,8 +360,14 @@ let _deferredInstallPrompt = null;
 let _installDismissed = false;
 
 export function isStandaloneDisplay() {
-  return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ||
-    window.navigator.standalone === true;
+  // manifest.webmanifest now requests display:"fullscreen" first (for the
+  // immersive status/nav-bar-free look on Android), falling back to
+  // standalone — so an installed app can legitimately report either one
+  // depending on platform/browser support. Both count as "already installed".
+  return (window.matchMedia && (
+    window.matchMedia('(display-mode: fullscreen)').matches ||
+    window.matchMedia('(display-mode: standalone)').matches
+  )) || window.navigator.standalone === true;
 }
 export function isIOSDevice() {
   const ua = navigator.userAgent || '';
@@ -370,6 +376,43 @@ export function isIOSDevice() {
 }
 export function isAndroidChrome() {
   return /android/i.test(navigator.userAgent) && /chrome/i.test(navigator.userAgent);
+}
+export function isAndroidDevice() {
+  return /android/i.test(navigator.userAgent || '');
+}
+
+/* ==========================================================================
+   Immersive fullscreen — hide the phone's status bar + navigation bar.
+   Android (any Chromium/Gecko browser there) honours the Fullscreen API for
+   ordinary page content: once granted, both the OS status bar and the
+   nav/gesture bar disappear, revealed only by an edge swipe. iOS has no
+   equivalent web API — Safari only supports element.requestFullscreen() on
+   iPad, never on iPhone, and there is no way for any website or home-screen
+   web app to hide the iPhone status bar or home-indicator; that's a WebKit
+   platform restriction, not a bug here. So this intentionally no-ops on
+   iOS — the translucent status bar + safe-area padding already set up in
+   index.html/base.css is the closest that platform allows, letting the
+   app's own background show through instead of a solid bar.
+   ========================================================================== */
+function requestImmersiveFullscreen() {
+  const el = document.documentElement;
+  const isFull = document.fullscreenElement || document.webkitFullscreenElement;
+  const request = el.requestFullscreen || el.webkitRequestFullscreen;
+  if (isFull || !request) return;
+  try {
+    const p = request.call(el);
+    if (p && p.catch) p.catch(() => {}); // no user-gesture yet — first tap below retries
+  } catch {}
+}
+export function initImmersiveMode() {
+  if (!isAndroidDevice()) return; // iOS: no-op, see comment above. Desktop: don't hijack browser chrome.
+  requestImmersiveFullscreen();
+  // Most engines reject the very first request without a user gesture —
+  // this catches it on the user's first tap anywhere in the app. Left
+  // attached permanently (not {once:true}) so fullscreen is quietly
+  // re-requested any time it gets exited (system dialog, hardware back,
+  // share sheet…) rather than just once.
+  document.addEventListener('pointerdown', requestImmersiveFullscreen);
 }
 
 export function initInstallPrompt() {

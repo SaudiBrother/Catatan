@@ -6,7 +6,7 @@
 import { initDB, getSetting, setSetting, isLocked, getLockConfig,
          verifyUnlock, unlockWithFingerprint, lockApp, createNote,
          getAllReminders, markReminderNotified, ensureDefaultCategories, purgeOldTrash } from './db.js';
-import { $, $$, icon, escapeHtml, openSheet, showToast, updateThemeColorMeta, isStandaloneDisplay, initInstallPrompt } from './ui.js';
+import { $, $$, icon, escapeHtml, openSheet, showToast, updateThemeColorMeta, isStandaloneDisplay, initInstallPrompt, initImmersiveMode } from './ui.js';
 import {
   renderDashboard, renderBrowse, renderSearch,
   renderGraph, renderSettings, renderReader, renderArchive, renderTrash,
@@ -270,6 +270,10 @@ async function boot() {
 
   // 4. Init PWA install prompt listener early
   initInstallPrompt();
+
+  // 4b. Request immersive fullscreen (hides status bar + nav bar on
+  //     Android; intentionally a no-op on iOS — see comment in ui.js)
+  initImmersiveMode();
 
   // 5. Check lock
   const lockCfg = await getLockConfig();
