@@ -1,3 +1,30 @@
+# Catat v2.1.8 — Tampilan Detail saat Instal PWA (Richer Install UI Chrome)
+
+`CACHE_VERSION` di `sw.js` dinaikkan ke `catat-v2.1.8` — **wajib** seperti biasa, kalau tidak pengguna lama tetap dapat `manifest.webmanifest` versi lama (tanpa `screenshots`) dari cache.
+
+## 📲 Prompt instal Chrome sekarang tampil detail — ikon besar, deskripsi, bottom-sheet
+
+Diminta: prompt instal PWA Chrome (Android & non-iOS lain) tampil detail seperti punya Soundnalyze, bukan prompt kecil standar.
+
+`manifest.webmanifest` sebenarnya sudah lama punya `description` yang lengkap, tapi field `screenshots` masih array kosong (`[]`) — padahal itu satu-satunya syarat yang belum kepenuhi. Chrome (v94+ di Android, v108+ di desktop) baru memunculkan **Richer Install UI** — bottom-sheet berisi ikon, nama, origin, tombol Instal, deskripsi, dan gambar besar di bawahnya — kalau manifest punya minimal satu entri `screenshots`. Tanpa itu, browser jatuh balik ke prompt kecil biasa (cuma ikon + nama) walau deskripsinya sudah ditulis lengkap dari dulu.
+
+Solusinya niru persis trik yang sudah dipakai di Soundnalyze: daripada bikin file screenshot UI terpisah, `icon-512.png` yang sudah ada dipakai ulang sebagai gambarnya (Chrome tidak mengharuskan isinya "screenshot" sungguhan — cuma perlu penuhi batas ukuran 320–3840px & rasio maks 2.3:1, dan ikon persegi 512×512 lolos telak):
+
+```json
+"screenshots": [
+  { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "label": "Catat — Catatan Pintar Offline" },
+  { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "form_factor": "wide", "label": "Catat — Catatan Pintar Offline" }
+]
+```
+
+Entri pertama (tanpa `form_factor`) yang memicu bottom-sheet mobile. Entri kedua (`form_factor: "wide"`) ditambahkan sebagai bonus — tidak diminta, tapi tanpa biaya tambahan (pakai ikon yang sama) dan sekalian mengaktifkan dialog instal detail versi desktop (Chrome/Edge) juga.
+
+Tidak ada perubahan JS — banner "Install App" custom (`initInstallPrompt` di `ui.js`) jalan seperti biasa; yang berubah cuma tampilan bawaan Chrome begitu `beforeinstallprompt.prompt()` dipanggil atau pengguna instal lewat ikon di address bar.
+
+> **iOS tetap tidak kebagian** — Safari/WebKit tidak mengimplementasikan Richer Install UI sama sekali (bukan cuma soal manifest), jadi ini murni batasan platform seperti catatan fullscreen di v2.1.6, bukan sesuatu yang bisa diakali dari kode.
+
+---
+
 # Catat v2.1.7 — Panel Font Tanpa Keyboard, Tombol Zoom Graf Diperbesar
 
 `CACHE_VERSION` di `sw.js` dinaikkan ke `catat-v2.1.7` — **wajib** seperti biasa, kalau tidak pengguna lama tetap dapat `ui.js`/`editor.js`/`fontpanel.js`/`views.js` dari cache.

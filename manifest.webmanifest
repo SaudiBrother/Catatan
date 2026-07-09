@@ -67,6 +67,20 @@
       "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }]
     }
   ],
-  "screenshots": [],
+  "screenshots": [
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "label": "Catat — Catatan Pintar Offline"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "Catat — Catatan Pintar Offline"
+    }
+  ],
   "prefer_related_applications": false
 }
