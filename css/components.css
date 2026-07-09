@@ -281,7 +281,13 @@
 /* ---------------- Graph ---------------- */
 .graph-canvas-wrap { position: relative; border-radius: var(--r-xl); overflow: hidden; background: var(--bg-elevated); border: 1px solid var(--border); height: calc(100vh - 220px); min-height: 380px; }
 .graph-canvas-wrap canvas { display: block; touch-action: none; }
-.graph-controls { position: absolute; left: var(--space-3); bottom: var(--space-3); display: flex; flex-direction: column; gap: 8px; }
+/* bottom/z-index mirror .fab's already-proven values for clearing the
+   fixed tabbar (base.css) — .graph-controls previously sat only 12px from
+   the viewport bottom with no z-index, so the tabbar visually overlapped
+   and swallowed taps on the lower button(s) in the stack. */
+.graph-controls { position: absolute; left: var(--space-3); bottom: calc(90px + var(--safe-b)); z-index: var(--z-tabbar); display: flex; flex-direction: column; gap: 10px; }
+.graph-controls .icon-btn { width: 48px; height: 48px; box-shadow: 0 4px 14px -4px rgba(0,0,0,.28); }
+.graph-controls .icon-btn svg { width: 22px; height: 22px; }
 .graph-legend { position: absolute; left: var(--space-3); top: var(--space-3); background: var(--bg-blur); backdrop-filter: blur(16px); border-radius: var(--r-md); padding: 8px 10px; font-size: var(--fs-caption); }
 
 /* ---------------- Badges / gamification ---------------- */
@@ -448,6 +454,14 @@
 .fp-bius { display: flex; background: var(--bg-soft); border-radius: var(--r-md); padding: 3px; gap: 2px; }
 .fp-bius-btn { width: 38px; height: 38px; border-radius: calc(var(--r-md) - 3px); display: grid; place-items: center; font-size: 16px; transition: background var(--dur-fast), transform var(--dur-fast) var(--ease-spring); }
 .fp-bius-btn:active { transform: scale(0.88); background: var(--bg-elevated); }
+.fp-bius-btn.active { background: var(--accent); color: var(--on-accent); }
+/* Stand-in for the native text-selection highlight while the "Aa" panel is
+   open. Opening it never re-focuses the note body (keeps the on-screen
+   keyboard dismissed), so there's no live browser Selection to show one —
+   this fills that gap. Purely transient: stripped the moment the sheet
+   closes (fontpanel.js) and never reaches saved content or undo history
+   (editor.js), so it isn't themed to look like a "real", persisted style. */
+.fp-editing-sel { background: color-mix(in srgb, var(--accent) 35%, transparent); border-radius: 2px; }
 .fp-size { display: flex; align-items: center; gap: 8px; background: var(--bg-soft); border-radius: var(--r-pill); padding: 6px 12px; color: var(--text-secondary); }
 .fp-size-btn { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-size: 17px; font-weight: 700; background: var(--bg-elevated); transition: transform var(--dur-fast) var(--ease-spring); }
 .fp-size-btn:active { transform: scale(0.85); }
