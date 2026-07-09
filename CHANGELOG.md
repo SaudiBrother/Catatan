@@ -1,3 +1,31 @@
+# Catat v2.1.7 — Panel Font Tanpa Keyboard, Tombol Zoom Graf Diperbesar
+
+`CACHE_VERSION` di `sw.js` dinaikkan ke `catat-v2.1.7` — **wajib** seperti biasa, kalau tidak pengguna lama tetap dapat `ui.js`/`editor.js`/`fontpanel.js`/`views.js` dari cache.
+
+## ⌨️ Panel Font ("Aa"): keyboard hilang, teks yang ditandai tetap kelihatan tersorot
+
+Sebelumnya, menandai teks lalu ketuk tombol "Aa" di toolbar melayang memanggil `restoreSelection(contentEl)` — fungsi ini isinya `contentEl.focus()`, jadi persis saat panel/sheet font muncul, keyboard bawaan HP ikut kebuka lagi (padahal sebelumnya sempat tertutup wajar begitu jari menyentuh tombol toolbar), rebutan tempat dengan sheet yang butuh ruang untuk deretan warna & galeri font.
+
+**Perbaikan di `editor.js`:** panggilan `restoreSelection(contentEl)` sebelum `openFontPanel(...)` dihapus. `openFontPanel` sendiri sudah menerima `_savedRange` (hasil `saveSelection()` yang jalan lebih dulu di `pointerdown` toolbar, sebelum blur terjadi) langsung sebagai argumen, jadi tidak pernah butuh fokus hidup untuk tahu teks mana yang sedang diedit.
+
+**Supaya teksnya tetap kelihatan tersorot walau keyboard hilang (`fontpanel.js`):** begitu panel dibuka, seleksi langsung dibungkus `<span>` (lewat `ensureWrapper()` yang sebelumnya baru jalan pas ada perubahan gaya pertama) dan diberi class `fp-editing-sel` — warna aksen tipis (`components.css`) yang berfungsi gantiin sorotan seleksi biru bawaan browser, yang otomatis hilang begitu elemen tidak fokus lagi. Class ini murni visual sementara:
+- **Tidak boleh ikut kesimpan** — `getCleanContentHTML()` sekarang ikut men-strip class ini sebelum ditulis ke database.
+- **Tidak boleh ikut kesimpan di riwayat undo/redo juga** — ditambah helper kecil `stripEditingSelClass()`, dipakai di `getState()` milik `history`. Tanpa ini, kalau pengguna sempat undo balik ke salah satu langkah "tengah" (persis saat panel font masih terbuka), span itu bisa nyangkut tersorot permanen tanpa ada panel yang lagi kebuka buat beresinnya.
+- **Dibuang bersih saat panel ditutup** — lewat `onClose` di `openSheet()` (bukan cuma di tombol ✓, supaya kena juga kalau ditutup lewat tap backdrop / tombol back). Kalau ternyata pengguna buka panel tapi gak ubah apa-apa (atau semua perubahan di-reset balik ke kosong), `<span>`-nya langsung dibongkar total — bukan cuma dikosongin class-nya — biar gak ninggalin `<span style="">` kosong nempel di catatan.
+
+**Efek samping yang ikut dibereskan sekalian:** tombol Bold/Italic/Underline/Strikethrough di panel ini sebelumnya pakai `document.execCommand(cmd)`, yang JUGA butuh `contentEl.focus()` + seleksi browser yang hidup buat jalan — jadi kalau cuma dihapus `restoreSelection`-nya, keempat tombol ini bakal berhenti berfungsi. Diganti total ke pola yang sama seperti size/warna/font (langsung set `style.fontWeight`/`fontStyle`/`textDecoration` ke `ensureWrapper()`, gak nyentuh `execCommand` atau seleksi browser sama sekali) — persis mekanisme yang sudah dipakai `openFontPanelForElement` (panel font utk judul) sebelumnya, cuma sekarang disamakan ke versi seleksi-body juga. Bonus: keempat tombol ini sekarang mendeteksi status aktualnya saat panel dibuka (kalau teks yang ditandai sudah tebal/miring, tombolnya langsung kelihatan aktif — sebelumnya gak pernah dicek sama sekali), dan dapat CSS `.fp-bius-btn.active` yang baru (sebelumnya cuma ada gaya `:active` sesaat waktu ditekan, gak ada tampilan "sedang menyala" yang menetap).
+
+Satu potensi konflik ikut ketangkap & dibetulkan waktu penyatuan ini: handler pemilih Jenis Font sebelumnya selalu nimpa `fontWeight`/`fontStyle` tanpa syarat sesuai preset font-nya — dulu aman karena Bold/Italic jalan lewat mekanisme `execCommand` yang terpisah, tapi begitu keduanya disatukan ke `<span>` yang sama, pilih font tanpa preset weight/style bisa diam-diam membatalkan toggle Bold/Italic yang barusan dipilih. Dijaga dengan aturan yang sama seperti di `openFontPanelForElement`: preset font cuma dipakai kalau pengguna belum menyalakan toggle-nya sendiri.
+
+## 🔍 Tombol Zoom Graf — diperbesar & dipindah ke atas
+
+`.graph-controls` sebelumnya `bottom: 12px` tanpa `z-index` sama sekali — persis di area yang ditumpuki `.tabbar` (fixed, `z-index: 40`), jadi tombol paling bawah di tumpukan (Center) sebagian ketutup/ketumpuk tabbar, susah kena tap tepat.
+
+- `bottom` diubah ke `calc(90px + var(--safe-b))` + `z-index: var(--z-tabbar)` — pola yang sama persis dengan `.fab` (tombol tambah catatan) yang sudah lama terbukti aman dari tabbar.
+- Ukuran tombol naik dari 38px → 48px, ikon dari 16px → 22px (glyph "−" di tombol Zoom Out ikut disesuaikan ke 24px), jarak antar tombol 8px → 10px, plus bayangan tipis biar tombolnya lebih kebaca terpisah dari graf di belakangnya.
+
+---
+
 # Catat v2.1.6 — Mode Layar Penuh (Immersive)
 
 Permintaan: status bar (jam/baterai/sinyal) dan navigation/gesture bar Android tidak lagi tampil saat memakai app — kompatibel iOS & Android. `CACHE_VERSION` di `sw.js` dinaikkan ke `catat-v2.1.6` — **wajib**, kalau tidak pengguna yang sudah pernah membuka app ini akan terus mendapat `index.html`/`manifest.webmanifest`/`ui.js`/`main.js` lama dari cache, walau file sumbernya sudah diperbaiki.
