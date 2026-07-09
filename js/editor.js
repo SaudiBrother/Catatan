@@ -205,7 +205,21 @@ function getCleanContentHTML(contentEl) {
   $$('[data-attachment-id]', clone).forEach((el) => { if (el.hasAttribute('src')) el.removeAttribute('src'); });
   $$('.find-hit', clone).forEach((span) => { span.replaceWith(document.createTextNode(span.textContent)); });
   $$('.li-add-btn', clone).forEach((btn) => btn.remove());
+  $$('.fp-editing-sel', clone).forEach((span) => span.classList.remove('fp-editing-sel'));
   return clone.innerHTML;
+}
+/* Undo/redo snapshots (below) intentionally keep using raw contentEl.innerHTML
+   rather than getCleanContentHTML — they need the attachment `src` intact,
+   unlike the DB save path. But they still must never freeze in a mid-edit
+   fp-editing-sel tint (fontpanel.js) into the undo stack, where restoring
+   that exact step later would leave a permanently-highlighted span with no
+   font panel left open to clean it back up. */
+function stripEditingSelClass(html) {
+  if (!html.includes('fp-editing-sel')) return html;
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  $$('.fp-editing-sel', tmp).forEach((el) => el.classList.remove('fp-editing-sel'));
+  return tmp.innerHTML;
 }
 
 /* ---------------- Table helpers ---------------- */
@@ -693,7 +707,7 @@ export async function renderNoteView(container, { id }, ctx) {
   }, 650);
 
   const history = createHistory({
-    getState: () => ({ title: titleInput.value, html: contentEl.innerHTML, titleStyle: titleInput.getAttribute('style') || '' }),
+    getState: () => ({ title: titleInput.value, html: stripEditingSelClass(contentEl.innerHTML), titleStyle: titleInput.getAttribute('style') || '' }),
     applyState: (state) => {
       titleInput.value = state.title;
       titleInput.setAttribute('style', state.titleStyle || '');
@@ -851,7 +865,7 @@ export async function renderNoteView(container, { id }, ctx) {
     onAction: async (cmd) => {
       if (cmd === 'font') {
         if (lastFocusTarget === 'title') { openFontPanelForElement(titleInput, () => commit(true)); return; }
-        restoreSelection(contentEl); openFontPanel(contentEl, _savedRange, commit); return;
+        openFontPanel(contentEl, _savedRange, commit); return;
       }
       if (cmd === 'checklist') { restoreSelection(contentEl); toggleListType(contentEl, 'checklist'); commit(true); return; }
       if (cmd === 'bulletlist') { restoreSelection(contentEl); toggleListType(contentEl, 'bullet'); commit(true); return; }

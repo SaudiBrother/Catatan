@@ -512,9 +512,9 @@ export async function renderGraph(container, params, ctx) {
         </div>
       </div>
       <div class="graph-controls">
-        <button class="icon-btn" id="gZoomIn">${icon('plus', 16)}</button>
-        <button class="icon-btn" id="gZoomOut" style="font-size:18px;display:grid;place-items:center">−</button>
-        <button class="icon-btn" id="gCenter">${icon('crop', 16)}</button>
+        <button class="icon-btn" id="gZoomIn">${icon('plus', 22)}</button>
+        <button class="icon-btn" id="gZoomOut" style="font-size:24px;display:grid;place-items:center">−</button>
+        <button class="icon-btn" id="gCenter">${icon('crop', 22)}</button>
       </div>
     </div>`;
 
@@ -1267,7 +1267,7 @@ export async function renderSettings(container, params, ctx) {
 
       <!-- App info + install banner at bottom -->
       <div id="installCardSlot">${installCardHTML()}</div>
-      <p style="text-align:center;color:var(--text-tertiary);font-size:12px;margin-top:16px">Catat v2.1.6 · Semua data tersimpan di perangkat kamu · Tidak perlu internet</p>
+      <p style="text-align:center;color:var(--text-tertiary);font-size:12px;margin-top:16px">Catat v2.1.7 · Semua data tersimpan di perangkat kamu · Tidak perlu internet</p>
     </div>
     </main>`;
 

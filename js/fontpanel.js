@@ -103,11 +103,19 @@ export function openFontPanel(contentEl, savedRange, commit) {
   }
   let workingRange = savedRange.cloneRange();
   let activeWrapper = null;
-  let fontSize = 16;
+  let fontSize = 16, isBold = false, isItalic = false;
+  const deco = new Set();
   try {
     const node = workingRange.startContainer.nodeType === 3 ? workingRange.startContainer.parentElement : workingRange.startContainer;
     const cs = node ? getComputedStyle(node) : null;
     if (cs && cs.fontSize) fontSize = Math.round(parseFloat(cs.fontSize)) || 16;
+    if (cs) {
+      isBold = parseInt(cs.fontWeight, 10) >= 600;
+      isItalic = cs.fontStyle === 'italic';
+      const dline = cs.textDecorationLine || cs.textDecoration || '';
+      if (dline.includes('underline')) deco.add('underline');
+      if (dline.includes('line-through')) deco.add('line-through');
+    }
   } catch {}
 
   function ensureWrapper() {
@@ -118,6 +126,16 @@ export function openFontPanel(contentEl, savedRange, commit) {
     return activeWrapper;
   }
 
+  /* This sheet deliberately never calls contentEl.focus() (see editor.js —
+     it used to, via restoreSelection(), which is exactly what was popping
+     the keyboard back up every time this panel opened). No focus means no
+     live browser Selection, which means the native blue selection
+     highlight is gone too — so wrap the range right away and give it a
+     visible tint of its own (.fp-editing-sel, components.css) that doesn't
+     depend on focus at all. Stripped again once the sheet closes (below),
+     leaving only whatever real style was actually chosen, if any. */
+  ensureWrapper().classList.add('fp-editing-sel');
+
   const html = `
     <div class="fp-header">
       <span class="fp-header-title">Font</span>
@@ -125,11 +143,12 @@ export function openFontPanel(contentEl, savedRange, commit) {
     </div>
     <div class="fp-row">
       <div class="fp-bius">
-        <button class="fp-bius-btn" data-fp="bold" aria-label="Tebal"><b>B</b></button>
-        <button class="fp-bius-btn" data-fp="italic" aria-label="Miring"><i>I</i></button>
-        <button class="fp-bius-btn" data-fp="underline" aria-label="Garis bawah"><u>U</u></button>
-        <button class="fp-bius-btn" data-fp="strikeThrough" aria-label="Coret"><s>S</s></button>
+        <button class="fp-bius-btn${isBold ? ' active' : ''}" data-fp="bold" aria-label="Tebal"><b>B</b></button>
+        <button class="fp-bius-btn${isItalic ? ' active' : ''}" data-fp="italic" aria-label="Miring"><i>I</i></button>
+        <button class="fp-bius-btn${deco.has('underline') ? ' active' : ''}" data-fp="underline" aria-label="Garis bawah"><u>U</u></button>
+        <button class="fp-bius-btn${deco.has('line-through') ? ' active' : ''}" data-fp="strikeThrough" aria-label="Coret"><s>S</s></button>
       </div>
+
       <div class="fp-size">
         ${icon('type', 16)}
         <button class="fp-size-btn" data-fp="size-dec" aria-label="Perkecil">−</button>
@@ -161,20 +180,27 @@ export function openFontPanel(contentEl, savedRange, commit) {
     </div>
   `;
 
-  const { el, close } = openSheet(html);
+  const { el, close } = openSheet(html, {
+    onClose: () => {
+      activeWrapper.classList.remove('fp-editing-sel');
+      // Opened but nothing was actually changed (or every change was
+      // undone back to nothing, e.g. highlight set then reset to "none")
+      // — unwrap the now-inert wrapper so no empty <span> is left behind.
+      if (!activeWrapper.getAttribute('style')) {
+        const parent = activeWrapper.parentNode;
+        while (activeWrapper.firstChild) parent.insertBefore(activeWrapper.firstChild, activeWrapper);
+        parent.removeChild(activeWrapper);
+      }
+    },
+  });
   $('#fpCloseBtn', el).onclick = () => close();
 
   $$('[data-fp]', el).forEach(btn => btn.onclick = () => {
     const cmd = btn.dataset.fp;
-    if (['bold', 'italic', 'underline', 'strikeThrough'].includes(cmd)) {
-      contentEl.focus();
-      const sel = window.getSelection();
-      sel.removeAllRanges(); sel.addRange(workingRange);
-      document.execCommand(cmd);
-      if (sel.rangeCount) workingRange = sel.getRangeAt(0).cloneRange();
-      commit(true);
-      return;
-    }
+    if (cmd === 'bold') { isBold = btn.classList.toggle('active'); ensureWrapper().style.fontWeight = isBold ? '800' : ''; commit(true); return; }
+    if (cmd === 'italic') { isItalic = btn.classList.toggle('active'); ensureWrapper().style.fontStyle = isItalic ? 'italic' : ''; commit(true); return; }
+    if (cmd === 'underline') { btn.classList.toggle('active') ? deco.add('underline') : deco.delete('underline'); ensureWrapper().style.textDecoration = [...deco].join(' '); commit(true); return; }
+    if (cmd === 'strikeThrough') { btn.classList.toggle('active') ? deco.add('line-through') : deco.delete('line-through'); ensureWrapper().style.textDecoration = [...deco].join(' '); commit(true); return; }
     if (cmd === 'size-dec' || cmd === 'size-inc') {
       fontSize = Math.max(10, Math.min(48, fontSize + (cmd === 'size-inc' ? 2 : -2)));
       $('#fpSizeVal', el).textContent = fontSize;
@@ -216,10 +242,13 @@ export function openFontPanel(contentEl, savedRange, commit) {
     if (fam?.cdn) loadGoogleFont(fam.cdn);
     const wrapper = ensureWrapper();
     wrapper.style.fontFamily = fam.css;
-    wrapper.style.fontWeight = fam.weight || '';
-    wrapper.style.fontStyle = fam.style || '';
     wrapper.style.letterSpacing = fam.spacing || '';
     wrapper.style.textTransform = fam.caps ? 'uppercase' : '';
+    // Font-family choice doesn't fight the standalone bold/italic toggles
+    // above — only fill in a weight/style from the preset if the person
+    // hasn't already set one of their own (same rule as openFontPanelForElement).
+    if (!isBold && fam.weight) wrapper.style.fontWeight = fam.weight;
+    if (!isItalic && fam.style) wrapper.style.fontStyle = fam.style;
     commit(true);
   });
 }
