@@ -103,10 +103,22 @@
       padding-bottom: max(env(safe-area-inset-bottom, 0px), 8px) !important;
     }
     /* Standalone: push content below the status-bar when using
-       apple-mobile-web-app-status-bar-style: black-translucent */
+       apple-mobile-web-app-status-bar-style: black-translucent. This is
+       what iOS always reports when added to the Home Screen — iOS has no
+       fullscreen display-mode, so it never matches the rule below. */
     @media all and (display-mode: standalone) {
       .topbar {
         padding-top: max(env(safe-area-inset-top, 20px), 20px) !important;
+      }
+    }
+    /* True fullscreen (Android, once js/ui.js's initImmersiveMode() grants
+       it): there is no status bar to clear any more, so don't force the
+       20px minimum above — only reserve space for an actual camera
+       cutout/punch-hole via the real env() value, which is 0px on the
+       vast majority of devices. */
+    @media all and (display-mode: fullscreen) {
+      .topbar {
+        padding-top: env(safe-area-inset-top, 0px) !important;
       }
     }
   </style>

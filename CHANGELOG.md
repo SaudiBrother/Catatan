@@ -1,3 +1,24 @@
+# Catat v2.1.6 — Mode Layar Penuh (Immersive)
+
+Permintaan: status bar (jam/baterai/sinyal) dan navigation/gesture bar Android tidak lagi tampil saat memakai app — kompatibel iOS & Android. `CACHE_VERSION` di `sw.js` dinaikkan ke `catat-v2.1.6` — **wajib**, kalau tidak pengguna yang sudah pernah membuka app ini akan terus mendapat `index.html`/`manifest.webmanifest`/`ui.js`/`main.js` lama dari cache, walau file sumbernya sudah diperbaiki.
+
+## 📱 Status bar & navigation bar disembunyikan
+
+Sebelumnya `manifest.webmanifest` cuma minta `display: "standalone"` — ini menyembunyikan address bar browser saat di-install, tapi status bar & navigation bar bawaan OS tetap tampil di atas/bawahnya, persis seperti di dua screenshot yang kamu kirim.
+
+**Android — sekarang beneran full-screen:**
+- `display` di manifest diubah ke `"fullscreen"`, dengan `display_override: ["fullscreen", "standalone", "minimal-ui"]` sebagai rantai fallback kalau ada browser yang belum dukung nilai `fullscreen`.
+- Fungsi baru `initImmersiveMode()` (`ui.js`), dipanggil dari `boot()` (`main.js`): minta Fullscreen API (`requestFullscreen()`, dengan fallback `webkitRequestFullscreen` untuk WebView/Chromium lama) begitu app dibuka. Kalau percobaan pertama ditolak browser karena belum ada gesture pengguna (perilaku standar semua browser demi mencegah situs maksa fullscreen diam-diam — bukan sesuatu yang bisa/boleh dilewati dari kode), dicoba ulang otomatis di ketukan pertama di mana pun dalam app. Sekali granted, status bar & nav/gesture bar Android hilang total, cuma muncul sesaat kalau layar di-swipe dari tepi. Jalan baik baik app di-install ke Home Screen maupun cuma dibuka langsung di tab Chrome — tidak wajib install dulu.
+- `isStandaloneDisplay()` ikut disesuaikan supaya juga mengenali `display-mode: fullscreen` sebagai "sudah ter-install" (sebelumnya cuma cek `standalone`) — kalau tidak disesuaikan, banner "Install App" akan salah terus nongol padahal app sudah jalan fullscreen.
+- CSS `.topbar` di `index.html` dapat aturan baru khusus `(display-mode: fullscreen)`: tidak lagi memaksa padding-top minimum 20px seperti di mode standalone (yang sengaja menyisakan ruang untuk status bar) — di fullscreen sungguhan tidak ada status bar yang perlu disisakan ruangnya, jadi cukup ikuti `env(safe-area-inset-top)` apa adanya (0px di hampir semua perangkat, atau setinggi notch/punch-hole kamera kalau ada).
+
+**iOS — ini batasan platform, bukan bug:** Safari/WebKit tidak punya API web sama sekali untuk menyembunyikan status bar iPhone atau home-indicator di bawah layar (`requestFullscreen()` di iOS cuma didukung di iPad, tidak pernah di iPhone) — berlaku untuk *semua* web app di iOS, bukan cuma Catat, dan tidak ada workaround dari sisi kode apa pun untuk ini. Yang sudah ada di `index.html` (`apple-mobile-web-app-status-bar-style: black-translucent` + `viewport-fit=cover` + padding `safe-area-inset-top`) itu sendiri sudah pendekatan terbaik yang diizinkan iOS: status bar jadi transparan dan konten app mengalir penuh sampai ke belakangnya, jadi ikon jam/baterai/sinyal tetap kelihatan tapi melebur di atas warna topbar alih-alih jadi bar solid terpisah. Tidak ada perubahan di sisi iOS karena bagian ini memang sudah dikonfigurasi optimal untuk platform tersebut sebelum perbaikan ini.
+
+## 📌 Yang Perlu Kamu Lakukan
+Untuk pengguna yang **sudah pernah install** PWA-nya di Android: mode fullscreen di manifest kadang baru ter-terapkan otomatis setelah Chrome mendeteksi manifest-nya berubah (biasanya dalam beberapa hari / beberapa kali buka), atau bisa dipercepat dengan uninstall lalu Add to Home Screen ulang — ini batasan cara Android men-generate WebAPK, bukan sesuatu yang bisa dipaksa dari sisi web app. Bagian `requestFullscreen()` di JS tidak kena batasan ini — itu langsung aktif di kunjungan berikutnya begitu file baru ke-cache, install ulang atau tidak.
+
+---
+
 # Catat v2.1.1 — Perbaikan Lanjutan
 
 Tiga masalah yang dilaporkan setelah rilis v2.1, plus satu isu keamanan yang ditemukan sambil menelusuri salah satunya. `CACHE_VERSION` di `sw.js` dinaikkan ke `catat-v2.1.1` — **wajib**, kalau tidak pengguna yang sudah pernah membuka app ini akan terus mendapat JS lama (dengan bug-bug di bawah ini) dari cache, walau file sumbernya sudah diperbaiki.
