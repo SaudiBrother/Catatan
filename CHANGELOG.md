@@ -1,3 +1,23 @@
+# Catat v2.1.9 — Perbaikan: Carousel 2 Gambar Jadi 1 di Prompt Instal
+
+`CACHE_VERSION` di `sw.js` dinaikkan ke `catat-v2.1.9` — **wajib** seperti biasa.
+
+## 🖼️ Bottom-sheet instal cuma tampilkan 1 gambar (bukan 2 lagi)
+
+Bonus `form_factor: "wide"` yang ditambahkan di v2.1.8 ternyata jadi bumerang: alih-alih cuma aktif di dialog instal desktop, Chrome di Android malah menampilkannya berdampingan dengan entri narrow sebagai carousel 2 gambar (kedua entri sama-sama nampilin `icon-512.png` yang sama, jadi kelihatan seperti 2 potongan berbeda karena di-crop) — bukti dari screenshot yang dikirim.
+
+Soundnalyze sendiri cuma punya **satu** entri di `screenshots` (tanpa `form_factor` sama sekali), dan itu yang bikin tampilannya cuma 1 gambar penuh seperti gambar referensi awal. Jadi entri kedua (`form_factor: "wide"`) dihapus lagi — balik ke persis 1 entri, 100% menyamai punya Soundnalyze:
+
+```json
+"screenshots": [
+  { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "label": "Catat — Catatan Pintar Offline" }
+]
+```
+
+Konsekuensinya: dialog instal detail versi desktop (Chrome/Edge) balik tidak dapat gambar (sama seperti sebelum v2.1.8) — tapi itu memang bukan yang diminta dari awal, jadi tidak masalah dilepas demi kestabilan tampilan di mobile.
+
+---
+
 # Catat v2.1.8 — Tampilan Detail saat Instal PWA (Richer Install UI Chrome)
 
 `CACHE_VERSION` di `sw.js` dinaikkan ke `catat-v2.1.8` — **wajib** seperti biasa, kalau tidak pengguna lama tetap dapat `manifest.webmanifest` versi lama (tanpa `screenshots`) dari cache.
